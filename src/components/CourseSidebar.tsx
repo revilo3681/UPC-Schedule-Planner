@@ -11,6 +11,7 @@ import {
   Plus,
   ChevronDown,
   ChevronUp,
+  ChevronsUpDown,
   AlertTriangle,
   User,
   Palette,
@@ -23,6 +24,7 @@ import {
   Check,
   MapPin,
   Sparkles,
+  Layers,
 } from 'lucide-react';
 import { doSessionsOverlap } from '../utils/scheduler';
 import { evaluateCommute, LimaDistrict, getInterCampusTravelTime, UPC_CAMPUSES } from '../utils/distance';
@@ -64,6 +66,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
   const [filterModality, setFilterModality] = useState<string>('all');
   const [filterCampus, setFilterCampus] = useState<string>('all');
   const [selectedCycleFilter, setSelectedCycleFilter] = useState<number | 'all'>('all');
+  // State: Record of courseId -> boolean (true = collapsed, false/undefined = open)
   const [collapsedCourses, setCollapsedCourses] = useState<Record<string, boolean>>({});
   const [editingColorCourseId, setEditingColorCourseId] = useState<string | null>(null);
   const [deletedToast, setDeletedToast] = useState<string | null>(null);
@@ -80,6 +83,20 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
       ...prev,
       [courseId]: !prev[courseId],
     }));
+  };
+
+  // Expand all courses
+  const handleExpandAll = () => {
+    setCollapsedCourses({});
+  };
+
+  // Collapse all courses
+  const handleCollapseAll = () => {
+    const allCollapsed: Record<string, boolean> = {};
+    courses.forEach((c) => {
+      allCollapsed[c.id] = true;
+    });
+    setCollapsedCourses(allCollapsed);
   };
 
   // Filter courses
@@ -177,6 +194,8 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
     (a: number, b: number) => a - b
   );
 
+  const areAllCollapsed = courses.length > 0 && courses.every((c) => !!collapsedCourses[c.id]);
+
   return (
     <aside
       id="course-sidebar-container"
@@ -194,25 +213,37 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
 
       {/* Sidebar Header with Title & Action Controls */}
       <div className="flex flex-col gap-2.5 pb-2.5 border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <span className="font-extrabold text-sm tracking-tight text-slate-800 dark:text-slate-100">
               Catálogo de Cursos & Secciones
             </span>
-            <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-900">
+            <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-red-100 text-[#e31e24] dark:bg-red-950/60 dark:text-red-300 border border-red-200 dark:border-red-900">
               {filteredCourses.length} de {courses.length}
             </span>
           </div>
 
-          <button
-            id="add-custom-course-btn"
-            onClick={onAddNewCourse}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#e31e24] hover:bg-red-700 text-white font-bold text-xs shadow-xs transition active:scale-95 cursor-pointer"
-            title="Crear un curso manualmente o importar"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Nuevo Curso</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Quick Expand / Collapse All toggle */}
+            <button
+              onClick={areAllCollapsed ? handleExpandAll : handleCollapseAll}
+              className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+              title={areAllCollapsed ? 'Expandir todas las secciones' : 'Plegar todos los cursos'}
+            >
+              <ChevronsUpDown className="w-3.5 h-3.5" />
+              <span>{areAllCollapsed ? 'Expandir todo' : 'Plegar todo'}</span>
+            </button>
+
+            <button
+              id="add-custom-course-btn"
+              onClick={onAddNewCourse}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#e31e24] hover:bg-red-700 text-white font-bold text-xs shadow-xs transition active:scale-95 cursor-pointer"
+              title="Crear un curso manualmente o importar"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Nuevo Curso</span>
+            </button>
+          </div>
         </div>
 
         {/* Search bar */}
@@ -288,7 +319,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
       </div>
 
       {/* Course List & Groups Accordions */}
-      <div className="flex flex-col gap-2.5 max-h-[calc(100vh-250px)] min-h-[420px] overflow-y-auto custom-scrollbar pr-1">
+      <div className="flex flex-col gap-3 max-h-[calc(100vh-220px)] min-h-[440px] overflow-y-auto custom-scrollbar pr-1 pb-4">
         {filteredCourses.length === 0 ? (
           <div className="py-12 px-4 text-center text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 flex flex-col items-center gap-3">
             <p className="font-semibold text-slate-600 dark:text-slate-300">
@@ -321,12 +352,15 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
             const currentSectionId = selectedSections[course.id];
             const isSelected = !!currentSectionId;
             const isCollapsed = !!collapsedCourses[course.id];
+            const activeSectionObj = isSelected
+              ? course.sections.find((s) => s.id === currentSectionId)
+              : null;
 
             return (
               <div
                 key={course.id}
                 id={`course-card-${course.id}`}
-                className={`rounded-xl border transition-all overflow-hidden ${
+                className={`rounded-xl border transition-all ${
                   isSelected
                     ? 'border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 shadow-xs'
                     : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'
@@ -334,16 +368,16 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
               >
                 {/* Course Header Bar */}
                 <div
-                  className={`p-3 flex items-center justify-between gap-2 cursor-pointer transition select-none ${
+                  className={`p-3 rounded-xl flex items-start justify-between gap-2.5 cursor-pointer transition select-none ${
                     isSelected
                       ? 'bg-red-50/40 dark:bg-red-950/30'
                       : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
                   }`}
                   onClick={() => toggleCollapse(course.id)}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-start gap-2.5 min-w-0 flex-1">
                     <span
-                      className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs ring-1 ring-black/10"
+                      className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs ring-1 ring-black/10 mt-0.5"
                       style={{ backgroundColor: course.color }}
                     />
                     <div className="min-w-0 flex-1">
@@ -355,14 +389,24 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                           {course.code}
                         </span>
                       </div>
-                      <div className="text-[10.5px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                        Ciclo {course.cycle || 1} • {course.credits} créditos • {course.sections.length} {course.sections.length === 1 ? 'sección' : 'secciones'}
+
+                      <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                        <span>Ciclo {course.cycle || 1}</span>
+                        <span>•</span>
+                        <span>{course.credits} créditos</span>
+                        <span>•</span>
+                        <span>{course.sections.length} {course.sections.length === 1 ? 'sección' : 'secciones'}</span>
+                        {isSelected && activeSectionObj && (
+                          <span className="px-1.5 py-0.2 rounded bg-[#e31e24] text-white font-bold text-[9.5px]">
+                            Secc. {activeSectionObj.sectionName}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
                   {/* Actions & Controls */}
-                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-1 shrink-0 mt-0.5" onClick={(e) => e.stopPropagation()}>
                     {/* Color palette toggle */}
                     <button
                       onClick={() =>
@@ -376,7 +420,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                       <Palette className="w-3.5 h-3.5" />
                     </button>
 
-                    {/* Delete course from catalog button (direct deletion without blocked modal) */}
+                    {/* Delete course from catalog button */}
                     {onDeleteCourse && (
                       <button
                         onClick={() => {
@@ -403,7 +447,8 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
 
                     <button
                       onClick={() => toggleCollapse(course.id)}
-                      className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                      className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                      title={isCollapsed ? 'Desplegar secciones' : 'Plegar secciones'}
                     >
                       {isCollapsed ? (
                         <ChevronDown className="w-4 h-4" />
@@ -434,12 +479,12 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                   </div>
                 )}
 
-                {/* Sections Table */}
+                {/* Sections Table & Detail list */}
                 {!isCollapsed && (
-                  <div className="p-2.5 pt-1 space-y-1.5">
+                  <div className="p-3 pt-1.5 space-y-2 border-t border-slate-100 dark:border-slate-800/80">
                     {course.sections.length === 0 ? (
                       <div className="py-4 text-center text-xs text-slate-400">
-                        No hay secciones en este curso.
+                        No hay secciones registradas para este curso.
                       </div>
                     ) : (
                       course.sections.map((section) => {
@@ -460,22 +505,22 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                                 onSelectSection(course.id, section.id);
                               }
                             }}
-                            className={`group/sec relative p-2.5 rounded-lg border text-xs transition cursor-pointer select-none ${
+                            className={`group/sec relative p-3 rounded-xl border text-xs transition cursor-pointer select-none ${
                               isSectionActive
-                                ? 'border-[#e31e24] dark:border-red-600 bg-red-50/60 dark:bg-red-950/40 shadow-xs'
-                                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 hover:border-slate-300 dark:hover:border-slate-700'
+                                ? 'border-[#e31e24] dark:border-red-600 bg-red-50/70 dark:bg-red-950/50 shadow-xs ring-1 ring-red-500/20'
+                                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 hover:border-slate-300 dark:hover:border-slate-700 shadow-2xs'
                             }`}
                           >
                             {/* Row 1: Section Name, Select Radio, Campus Commute badge & Vacancies & Delete section */}
-                            <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex items-center gap-2">
                                 {isSectionActive ? (
                                   <CheckCircle2 className="w-4 h-4 text-[#e31e24] dark:text-red-400 shrink-0" />
                                 ) : (
                                   <Circle className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
                                 )}
-                                <span className="font-extrabold text-slate-800 dark:text-slate-100">
-                                  {section.sectionName}
+                                <span className="font-extrabold text-sm text-slate-900 dark:text-slate-100">
+                                  Sección {section.sectionName}
                                 </span>
                               </div>
 
@@ -483,7 +528,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                                 {/* Commute proximity badge */}
                                 {primaryCampus !== 'Online' && (
                                   <span
-                                    className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold border flex items-center gap-0.5 ${
+                                    className={`px-1.5 py-0.5 rounded-full text-[9.5px] font-bold border flex items-center gap-0.5 ${
                                       commute.level === 'close'
                                         ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
                                         : commute.level === 'medium'
@@ -498,17 +543,18 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                                 )}
 
                                 {conflictCheck.conflicts && !isSectionActive && (
-                                  <span className="flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-red-100 text-[#e31e24] dark:bg-red-950 dark:text-red-300 font-bold text-[9px] border border-red-200 dark:border-red-900">
+                                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-red-100 text-[#e31e24] dark:bg-red-950 dark:text-red-300 font-bold text-[9.5px] border border-red-200 dark:border-red-900">
                                     <AlertTriangle className="w-2.5 h-2.5" /> Cruce
                                   </span>
                                 )}
+
                                 {section.vacancies && (
-                                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                                    {section.vacancies}
+                                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                                    Vacantes: {section.vacancies}
                                   </span>
                                 )}
 
-                                {/* Delete Section button (Direct execution without modal block) */}
+                                {/* Delete Section button */}
                                 {onDeleteSection && (
                                   <button
                                     onClick={(e) => {
@@ -527,7 +573,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
 
                             {/* Inter-Campus Travel Warning if any */}
                             {interCampusCheck.hasCommuteIssue && !isSectionActive && (
-                              <div className="mt-1 flex items-center gap-1 text-[9.5px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-900">
+                              <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-900">
                                 <Navigation className="w-3 h-3 shrink-0 text-amber-600" />
                                 <span>{interCampusCheck.msg}</span>
                               </div>
@@ -535,11 +581,11 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
 
                             {/* Row 2: Teachers (Fully visible, wrapping nicely) */}
                             {section.teachers.length > 0 && (
-                              <div className="mt-1.5 p-1.5 rounded-md bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/50">
+                              <div className="mt-2 p-2 rounded-lg bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60">
                                 <div className="flex items-start gap-1.5">
                                   <User className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-0.5" />
-                                  <div className="flex-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200 leading-tight break-words">
-                                    <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block">
+                                  <div className="flex-1 text-[11px] font-semibold text-slate-800 dark:text-slate-200 leading-snug break-words">
+                                    <span className="text-[9.5px] uppercase font-bold text-slate-400 dark:text-slate-400 block mb-0.5">
                                       {section.teachers.length === 1 ? 'Docente:' : 'Docentes:'}
                                     </span>
                                     {section.teachers.join(', ')}
@@ -550,18 +596,18 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
 
                             {/* Row 3: Class Schedule Sessions (Full details, Day, Hours, Sede, Aula, Modality) */}
                             <div className="mt-2 space-y-1.5">
-                              <span className="text-[9.5px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-500 block px-0.5">
+                              <span className="text-[9.5px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-400 block px-0.5">
                                 Horarios y Sesiones:
                               </span>
                               {section.sessions.map((sess, idx) => (
                                 <div
                                   key={sess.id || `sess-${idx}`}
-                                  className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-300 space-y-1"
+                                  className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/95 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-300 space-y-1.5"
                                 >
                                   {/* Top line: Day, Time, Type Badge, Modality Badge */}
                                   <div className="flex items-center justify-between gap-1.5 flex-wrap">
                                     <div className="flex items-center gap-1.5">
-                                      <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950 text-[#e31e24] dark:text-red-400 font-extrabold text-[10px] font-mono border border-red-200 dark:border-red-900/60">
+                                      <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950 text-[#e31e24] dark:text-red-400 font-extrabold text-[10.5px] font-mono border border-red-200 dark:border-red-900/60">
                                         {sess.day}
                                       </span>
                                       <span className="font-mono font-bold text-[11px] text-slate-900 dark:text-slate-100">
@@ -588,7 +634,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                                   </div>
 
                                   {/* Bottom line: Campus / Sede + Classroom / Aula */}
-                                  <div className="flex items-center justify-between gap-1 text-[10px] text-slate-500 dark:text-slate-400 pt-0.5 border-t border-slate-100 dark:border-slate-700/60 flex-wrap">
+                                  <div className="flex items-center justify-between gap-1 text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-700/60 flex-wrap">
                                     <div className="flex items-center gap-1">
                                       <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
                                       <span className="font-semibold text-slate-700 dark:text-slate-300">
@@ -654,3 +700,4 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
     </aside>
   );
 };
+
