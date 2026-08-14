@@ -1,0 +1,6 @@
+{
+  "name": "Planificador de Horarios UPC",
+  "description": "Constructor y optimizador interactivo de horarios universitarios con detección de cruces, soporte para formato UPC Banner, importación inteligente y generador automático de combinaciones.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
