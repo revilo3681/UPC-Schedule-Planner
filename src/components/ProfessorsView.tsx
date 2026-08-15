@@ -1,62 +1,53 @@
 import React, { useMemo, useState } from 'react';
 import { Course } from '../types/schedule';
-import { FaceRating, Professor, ProfessorReview } from '../types/professors';
+import { FaceRating, Professor } from '../types/professors';
 import { hasBannedLanguage } from '../utils/reviewSafety';
 import { faceEmoji, faceLabel, professorMood } from '../utils/professors';
 import {
   Heart,
   Plus,
   Search,
-  Smile,
-  Meh,
-  Frown,
   ExternalLink,
-  ShieldCheck,
-  X,
   GraduationCap,
 } from 'lucide-react';
+
+const DATA_UPDATED_AT = new Date(2026, 7, 14);
+const MONTHS_ES = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+
+function formatDataDates() {
+  const next = new Date(DATA_UPDATED_AT.getFullYear(), DATA_UPDATED_AT.getMonth() + 1, 1);
+  return {
+    updated: `${DATA_UPDATED_AT.getDate()} de ${MONTHS_ES[DATA_UPDATED_AT.getMonth()]} ${DATA_UPDATED_AT.getFullYear()}`,
+    nextMonth: `${MONTHS_ES[next.getMonth()]} ${next.getFullYear()}`,
+  };
+}
 
 interface ProfessorsViewProps {
   professors: Professor[];
   courses: Course[];
-  authorName: string;
-  ethicsAccepted: boolean;
-  onAcceptEthics: () => void;
   onToggleFavorite: (professorId: string) => void;
   onAddProfessor: (name: string, courseName: string) => void;
-  onAddReview: (professorId: string, review: Omit<ProfessorReview, 'id' | 'createdAt'>) => string | null;
   darkMode: boolean;
 }
-
-const FACE_OPTIONS: Array<{ id: FaceRating; icon: React.ReactNode; label: string }> = [
-  { id: 'happy', icon: <Smile className="w-4 h-4" />, label: 'Feliz' },
-  { id: 'regular', icon: <Meh className="w-4 h-4" />, label: 'Regular' },
-  { id: 'sad', icon: <Frown className="w-4 h-4" />, label: 'Triste' },
-];
 
 export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
   professors,
   courses,
-  authorName,
-  ethicsAccepted,
-  onAcceptEthics,
   onToggleFavorite,
   onAddProfessor,
-  onAddReview,
   darkMode,
 }) => {
   const [search, setSearch] = useState('');
   const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [moodFilter, setMoodFilter] = useState<FaceRating | 'all'>('all');
   const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'mid' | 'low' | 'none'>('all');
-  const [showEthics, setShowEthics] = useState(!ethicsAccepted);
   const [newName, setNewName] = useState('');
   const [newCourse, setNewCourse] = useState('');
-  const [reviewFor, setReviewFor] = useState<string | null>(null);
-  const [reviewCourse, setReviewCourse] = useState('');
-  const [reviewRating, setReviewRating] = useState<FaceRating>('happy');
-  const [reviewComment, setReviewComment] = useState('');
-  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const dataDates = formatDataDates();
 
   const courseNames = useMemo(
     () => Array.from(new Set(courses.map((c) => c.name))).sort((a, b) => a.localeCompare(b, 'es')),
@@ -94,44 +85,18 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
 
   const handleAddProfessor = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ethicsAccepted) {
-      setShowEthics(true);
-      return;
-    }
     if (newName.trim().length < 4) {
-      setReviewError('Escribe el nombre completo del profesor.');
+      setFormError('Escribe el nombre completo del profesor.');
       return;
     }
     if (hasBannedLanguage(`${newName} ${newCourse}`)) {
-      setReviewError('Ese nombre o curso no se puede guardar. Evita insultos o lenguaje ofensivo.');
+      setFormError('Ese nombre o curso no se puede guardar. Evita insultos o lenguaje ofensivo.');
       return;
     }
     onAddProfessor(newName.trim(), newCourse.trim());
     setNewName('');
     setNewCourse('');
-    setReviewError(null);
-  };
-
-  const handleAddReview = (professorId: string) => {
-    if (!ethicsAccepted) {
-      setShowEthics(true);
-      return;
-    }
-    const error = onAddReview(professorId, {
-      author: authorName || 'Estudiante UPC',
-      courseName: reviewCourse.trim() || 'Curso no indicado',
-      rating: reviewRating,
-      comment: reviewComment.trim(),
-    });
-    if (error) {
-      setReviewError(error);
-      return;
-    }
-    setReviewFor(null);
-    setReviewComment('');
-    setReviewCourse('');
-    setReviewRating('happy');
-    setReviewError(null);
+    setFormError(null);
   };
 
   return (
@@ -141,58 +106,18 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
         darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
       }`}
     >
-      {showEthics && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div
-            className={`w-full max-w-lg rounded-3xl border p-5 shadow-2xl ${
-              darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
-            }`}
-          >
-            <div className="flex items-center gap-2 mb-3">
-              <ShieldCheck className="w-5 h-5 text-emerald-500" />
-              <h3 className="font-extrabold text-base">Antes de calificar: usa respeto</h3>
-            </div>
-            <div className="text-xs leading-relaxed text-slate-600 dark:text-slate-300 space-y-2">
-              <p>Estas reseñas las leen otros alumnos de la UPC. Sirven para armar horarios, no para atacar a nadie.</p>
-              <ul className="list-disc pl-4 space-y-1">
-                <li>Habla de la clase: claridad, exigencia, puntualidad, materiales.</li>
-                <li>No insultos, groserías, apodos ofensivos ni ataques personales.</li>
-                <li>Nada sexual, violento, discriminatorio o que humille al docente o a compañeros.</li>
-                <li>No inventes rumores. Si no cursaste con esa persona, no publiques una reseña.</li>
-              </ul>
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowEthics(false)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-              >
-                Ahora no
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onAcceptEthics();
-                  setShowEthics(false);
-                }}
-                className="px-3 py-1.5 rounded-lg bg-[#e31e24] text-white text-xs font-extrabold"
-              >
-                Acepto y califico con respeto
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className={`p-4 sm:p-5 border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <GraduationCap className="w-5 h-5 text-[#e31e24]" />
               <h2 className="font-extrabold text-lg tracking-tight">Califica a tus profes</h2>
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                Información actualizada hasta el {dataDates.updated} · Próxima actualización: {dataDates.nextMonth}
+              </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-              Directorio de docentes UPC con promedio comunitario (feliz / regular / triste). Marca un corazón para favoritos; el catálogo y Auto ⚡ los pondrán primero si dictan ese curso.
+              Promedios de MisProfesores (feliz / regular / triste). Marca un corazón para favoritos: el catálogo y Auto ⚡ los priorizan si dictan ese curso. Para escribir reseñas nuevas, usa el enlace de MisProfesores.
             </p>
           </div>
           <a
@@ -318,9 +243,9 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
         </button>
       </form>
 
-      {reviewError && (
+      {formError && (
         <div className="mx-4 mt-3 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-semibold">
-          {reviewError}
+          {formError}
         </div>
       )}
 
@@ -399,74 +324,6 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
                   ))}
                 </div>
 
-                {reviewFor === prof.id ? (
-                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-2.5 space-y-2 bg-white dark:bg-slate-900">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-extrabold">Nueva reseña</span>
-                      <button type="button" onClick={() => setReviewFor(null)}>
-                        <X className="w-3.5 h-3.5 text-slate-400" />
-                      </button>
-                    </div>
-                    <input
-                      value={reviewCourse}
-                      onChange={(e) => setReviewCourse(e.target.value)}
-                      list="professor-course-options"
-                      placeholder="¿De qué curso hablas?"
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs"
-                    />
-                    <div className="flex items-center gap-1">
-                      {FACE_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => setReviewRating(opt.id)}
-                          className={`flex-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border flex items-center justify-center gap-1 ${
-                            reviewRating === opt.id
-                              ? opt.id === 'happy'
-                                ? 'bg-emerald-500 text-white border-emerald-500'
-                                : opt.id === 'sad'
-                                  ? 'bg-slate-700 text-white border-slate-700'
-                                  : 'bg-amber-400 text-slate-950 border-amber-400'
-                              : 'border-slate-200 dark:border-slate-700 text-slate-500'
-                          }`}
-                        >
-                          {opt.icon}
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                    <textarea
-                      value={reviewComment}
-                      onChange={(e) => setReviewComment(e.target.value)}
-                      rows={3}
-                      placeholder="Cómo enseña, si explica bien, si es exigente... sin insultos."
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs resize-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleAddReview(prof.id)}
-                      className="w-full py-1.5 rounded-lg bg-[#e31e24] text-white text-xs font-extrabold"
-                    >
-                      Publicar reseña
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!ethicsAccepted) {
-                        setShowEthics(true);
-                        return;
-                      }
-                      setReviewFor(prof.id);
-                      setReviewCourse(prof.courses[0] || '');
-                      setReviewError(null);
-                    }}
-                    className="mt-auto py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800"
-                  >
-                    Escribir reseña
-                  </button>
-                )}
               </article>
             );
           })

@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Course, ScheduleCombination, SelectedCourseMap, StudentProfile } from './types/schedule';
-import { Professor, ProfessorReview } from './types/professors';
+import { Professor } from './types/professors';
 import { UPC_SAMPLE_COURSES } from './data/upcSampleData';
 import { calculateScheduleStats, detectConflicts, getActiveSessions } from './utils/scheduler';
 import { HeaderNavbar } from './components/HeaderNavbar';
@@ -21,7 +21,6 @@ import { ProfessorsView } from './components/ProfessorsView';
 import { LimaDistrict, detectInterCampusConflicts } from './utils/distance';
 import { favoriteTeacherNames, mergeProfessorLists, mergeProfessorsFromCourses, normalizePersonName } from './utils/professors';
 import { UPC_PROFESSORS_SEED } from './data/upcProfessors';
-import { reviewSafetyMessage } from './utils/reviewSafety';
 import { decodePlanHash } from './utils/export';
 import {
   Grid,
@@ -43,7 +42,6 @@ const STORAGE_KEY_DISTRICT = 'sumplus_upc_district_v1';
 const STORAGE_KEY_PROFILE = 'sumplus_upc_profile_v4';
 const STORAGE_KEY_TUTORIAL = 'sumplus_upc_hide_tutorial_v1';
 const STORAGE_KEY_PROFESSORS = 'sumplus_upc_professors_v1';
-const STORAGE_KEY_ETHICS = 'sumplus_upc_professor_ethics_v1';
 
 const DEFAULT_PROFILE: StudentProfile = {
   fullName: 'Alex Rivera Campos',
@@ -177,9 +175,6 @@ export default function App() {
     }
     return mergeProfessorLists(UPC_PROFESSORS_SEED, []);
   });
-  const [ethicsAccepted, setEthicsAccepted] = useState(
-    () => localStorage.getItem(STORAGE_KEY_ETHICS) === '1'
-  );
   const [catalogUndo, setCatalogUndo] = useState<{
     courses: Course[];
     selectedSections: SelectedCourseMap;
@@ -408,11 +403,6 @@ export default function App() {
   // Handler: Apply generated combination from Auto ⚡
   const favoriteNames = useMemo(() => favoriteTeacherNames(professors), [professors]);
 
-  const handleAcceptEthics = () => {
-    setEthicsAccepted(true);
-    localStorage.setItem(STORAGE_KEY_ETHICS, '1');
-  };
-
   const handleToggleFavoriteProfessor = (professorId: string) => {
     setProfessors((prev) =>
       prev.map((prof) => (prof.id === professorId ? { ...prof, favorite: !prof.favorite } : prof))
@@ -440,36 +430,6 @@ export default function App() {
         },
       ];
     });
-  };
-
-  const handleAddProfessorReview = (
-    professorId: string,
-    review: Omit<ProfessorReview, 'id' | 'createdAt'>
-  ): string | null => {
-    const safety = reviewSafetyMessage(review.comment);
-    if (safety) return safety;
-    setProfessors((prev) =>
-      prev.map((prof) =>
-        prof.id === professorId
-          ? {
-              ...prof,
-              courses:
-                review.courseName && !prof.courses.includes(review.courseName)
-                  ? [...prof.courses, review.courseName]
-                  : prof.courses,
-              reviews: [
-                {
-                  ...review,
-                  id: `rev-${Date.now()}`,
-                  createdAt: new Date().toISOString(),
-                },
-                ...prof.reviews,
-              ],
-            }
-          : prof
-      )
-    );
-    return null;
   };
 
   const handleApplyCombination = (comb: ScheduleCombination) => {
@@ -655,12 +615,8 @@ export default function App() {
           <ProfessorsView
             professors={professors}
             courses={courses}
-            authorName={profile.fullName}
-            ethicsAccepted={ethicsAccepted}
-            onAcceptEthics={handleAcceptEthics}
             onToggleFavorite={handleToggleFavoriteProfessor}
             onAddProfessor={handleAddProfessor}
-            onAddReview={handleAddProfessorReview}
             darkMode={darkMode}
           />
         )}
