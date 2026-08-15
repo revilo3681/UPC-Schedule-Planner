@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Course, ScheduleCombination, SelectedCourseMap, StudentProfile } from './types/schedule';
+import { Professor, ProfessorReview } from './types/professors';
 import { UPC_SAMPLE_COURSES } from './data/upcSampleData';
 import { calculateScheduleStats, detectConflicts, getActiveSessions } from './utils/scheduler';
 import { HeaderNavbar } from './components/HeaderNavbar';
@@ -16,7 +17,11 @@ import { ImportModal } from './components/ImportModal';
 import { TableView } from './components/TableView';
 import { ExportModal } from './components/ExportModal';
 import { ProfileModal } from './components/ProfileModal';
+import { ProfessorsView } from './components/ProfessorsView';
 import { LimaDistrict, detectInterCampusConflicts } from './utils/distance';
+import { favoriteTeacherNames, mergeProfessorLists, mergeProfessorsFromCourses, normalizePersonName } from './utils/professors';
+import { UPC_PROFESSORS_SEED } from './data/upcProfessors';
+import { reviewSafetyMessage } from './utils/reviewSafety';
 import { decodePlanHash } from './utils/export';
 import {
   Grid,
@@ -27,6 +32,7 @@ import {
   X,
   FileSpreadsheet,
   Plus,
+  GraduationCap,
 } from 'lucide-react';
 
 const STORAGE_KEY_COURSES = 'sumplus_upc_courses_v4';
@@ -36,6 +42,8 @@ const STORAGE_KEY_DARK = 'sumplus_upc_dark_v1';
 const STORAGE_KEY_DISTRICT = 'sumplus_upc_district_v1';
 const STORAGE_KEY_PROFILE = 'sumplus_upc_profile_v4';
 const STORAGE_KEY_TUTORIAL = 'sumplus_upc_hide_tutorial_v1';
+const STORAGE_KEY_PROFESSORS = 'sumplus_upc_professors_v1';
+const STORAGE_KEY_ETHICS = 'sumplus_upc_professor_ethics_v1';
 
 const DEFAULT_PROFILE: StudentProfile = {
   fullName: 'Alex Rivera Campos',
@@ -117,7 +125,7 @@ export default function App() {
   });
 
   // Active View ('grid' | 'list' | 'table' | 'auto')
-  const [activeView, setActiveView] = useState<'grid' | 'list' | 'table' | 'auto'>('grid');
+  const [activeView, setActiveView] = useState<'grid' | 'list' | 'table' | 'auto' | 'profes'>('grid');
 
   // Courses state
   const [courses, setCourses] = useState<Course[]>(() => {
@@ -157,6 +165,21 @@ export default function App() {
   const [showTutorialBanner, setShowTutorialBanner] = useState(() => {
     return localStorage.getItem(STORAGE_KEY_TUTORIAL) !== '1';
   });
+  const [professors, setProfessors] = useState<Professor[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_PROFESSORS);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return mergeProfessorLists(UPC_PROFESSORS_SEED, parsed);
+        }
+      } catch {}
+    }
+    return mergeProfessorLists(UPC_PROFESSORS_SEED, []);
+  });
+  const [ethicsAccepted, setEthicsAccepted] = useState(
+    () => localStorage.getItem(STORAGE_KEY_ETHICS) === '1'
+  );
   const [catalogUndo, setCatalogUndo] = useState<{
     courses: Course[];
     selectedSections: SelectedCourseMap;
@@ -192,6 +215,14 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_PROFESSORS, JSON.stringify(professors));
+  }, [professors]);
+
+  useEffect(() => {
+    setProfessors((prev) => mergeProfessorsFromCourses(prev, courses));
+  }, [courses]);
 
   useEffect(() => {
     if (!catalogUndo) return;
@@ -375,6 +406,72 @@ export default function App() {
   };
 
   // Handler: Apply generated combination from Auto ⚡
+  const favoriteNames = useMemo(() => favoriteTeacherNames(professors), [professors]);
+
+  const handleAcceptEthics = () => {
+    setEthicsAccepted(true);
+    localStorage.setItem(STORAGE_KEY_ETHICS, '1');
+  };
+
+  const handleToggleFavoriteProfessor = (professorId: string) => {
+    setProfessors((prev) =>
+      prev.map((prof) => (prof.id === professorId ? { ...prof, favorite: !prof.favorite } : prof))
+    );
+  };
+
+  const handleAddProfessor = (name: string, courseName: string) => {
+    setProfessors((prev) => {
+      const key = normalizePersonName(name);
+      if (prev.some((prof) => normalizePersonName(prof.name) === key)) {
+        return prev.map((prof) =>
+          normalizePersonName(prof.name) === key && courseName && !prof.courses.includes(courseName)
+            ? { ...prof, courses: [...prof.courses, courseName] }
+            : prof
+        );
+      }
+      return [
+        ...prev,
+        {
+          id: `prof-${key.replace(/\s+/g, '-')}-${Date.now()}`,
+          name,
+          courses: courseName ? [courseName] : [],
+          favorite: false,
+          reviews: [],
+        },
+      ];
+    });
+  };
+
+  const handleAddProfessorReview = (
+    professorId: string,
+    review: Omit<ProfessorReview, 'id' | 'createdAt'>
+  ): string | null => {
+    const safety = reviewSafetyMessage(review.comment);
+    if (safety) return safety;
+    setProfessors((prev) =>
+      prev.map((prof) =>
+        prof.id === professorId
+          ? {
+              ...prof,
+              courses:
+                review.courseName && !prof.courses.includes(review.courseName)
+                  ? [...prof.courses, review.courseName]
+                  : prof.courses,
+              reviews: [
+                {
+                  ...review,
+                  id: `rev-${Date.now()}`,
+                  createdAt: new Date().toISOString(),
+                },
+                ...prof.reviews,
+              ],
+            }
+          : prof
+      )
+    );
+    return null;
+  };
+
   const handleApplyCombination = (comb: ScheduleCombination) => {
     setSelectedSections(comb.selectedSections);
     setActiveView('grid');
@@ -515,6 +612,7 @@ export default function App() {
               userDistrict={userDistrict}
               onUndoLastChange={handleUndoCatalog}
               canUndo={!!catalogUndo}
+              favoriteTeacherNames={favoriteNames}
             />
           </div>
         )}
@@ -538,6 +636,7 @@ export default function App() {
               userDistrict={userDistrict}
               onUndoLastChange={handleUndoCatalog}
               canUndo={!!catalogUndo}
+              favoriteTeacherNames={favoriteNames}
             />
           </div>
         )}
@@ -548,6 +647,20 @@ export default function App() {
             selectedSections={selectedSections}
             onSelectSection={handleSelectSection}
             onDeselectCourse={handleDeselectCourse}
+            darkMode={darkMode}
+          />
+        )}
+
+        {activeView === 'profes' && (
+          <ProfessorsView
+            professors={professors}
+            courses={courses}
+            authorName={profile.fullName}
+            ethicsAccepted={ethicsAccepted}
+            onAcceptEthics={handleAcceptEthics}
+            onToggleFavorite={handleToggleFavoriteProfessor}
+            onAddProfessor={handleAddProfessor}
+            onAddReview={handleAddProfessorReview}
             darkMode={darkMode}
           />
         )}
@@ -607,6 +720,16 @@ export default function App() {
         </button>
 
         <button
+          onClick={() => setActiveView('profes')}
+          className={`flex flex-col items-center gap-1 px-2 py-1 rounded-xl text-[10px] font-bold ${
+            activeView === 'profes' ? 'text-rose-500 font-extrabold' : 'text-slate-500'
+          }`}
+        >
+          <GraduationCap className="w-4 h-4" />
+          <span>Profes</span>
+        </button>
+
+        <button
           onClick={() => setIsImportOpen(true)}
           className="flex flex-col items-center gap-1 px-2 py-1 rounded-xl text-[10px] font-bold text-slate-500"
         >
@@ -659,6 +782,7 @@ export default function App() {
         darkMode={darkMode}
         userDistrict={userDistrict}
         preferredCampus={profile.campus}
+        favoriteTeacherNames={favoriteNames}
       />
 
       <ExportModal

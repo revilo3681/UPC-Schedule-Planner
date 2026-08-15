@@ -25,6 +25,7 @@ import {
   Flame,
   MapPin,
   Navigation,
+  Heart,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -38,6 +39,7 @@ import {
   isOnlineSession,
   UPCCampus,
 } from '../utils/distance';
+import { sectionHasFavoriteTeacher } from '../utils/professors';
 
 const ALL_GENERATOR_CAMPUSES: UPCCampus[] = [
   'Monterrico',
@@ -58,6 +60,7 @@ interface AutoGeneratorModalProps {
   darkMode: boolean;
   userDistrict?: LimaDistrict;
   preferredCampus?: string;
+  favoriteTeacherNames?: string[];
 }
 
 export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
@@ -69,6 +72,7 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
   darkMode,
   userDistrict = 'Santiago de Surco',
   preferredCampus,
+  favoriteTeacherNames = [],
 }) => {
   // Courses to include in generator (default: courses that have sections)
   const [targetCourseIds, setTargetCourseIds] = useState<string[]>(() => {
@@ -92,6 +96,8 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
   const [filterMaxEmptyHours, setFilterMaxEmptyHours] = useState<number | null>(null);
   const [filterOnlyVacancies, setFilterOnlyVacancies] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
+  const [courseModalities, setCourseModalities] = useState<Record<string, GeneratorModality[]>>({});
+  const [filterPreferFavorites, setFilterPreferFavorites] = useState(true);
 
   const closestCampuses = useMemo(
     () => getClosestCampuses(userDistrict, 2),
@@ -110,23 +116,41 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
   }, [allowedModalities]);
 
   const coursesForGenerator = useMemo(() => {
-    return courses.map((course) => ({
-      ...course,
-      sections: course.sections.filter((section) => {
+    return courses.map((course) => {
+      const preferred = courseModalities[course.id];
+      const modsToUse =
+        preferred && preferred.length > 0 ? preferred : effectiveModalities;
+      const filtered = course.sections.filter((section) => {
         if (filterOnlyVacancies && !sectionHasVacancies(section.vacancies)) return false;
         const campusOk = section.sessions.every((sess) => {
           if (isOnlineSession(sess.modality, sess.campus)) return true;
           return effectiveCampuses.includes(normalizeCampusName(sess.campus));
         });
         const modalityOk = section.sessions.every((sess) =>
-          effectiveModalities.some((mod) =>
+          modsToUse.some((mod) =>
             sessionMatchesModalityFilter(sess.modality, sess.campus, mod)
           )
         );
         return campusOk && modalityOk;
-      }),
-    }));
-  }, [courses, effectiveCampuses, effectiveModalities, filterOnlyVacancies]);
+      });
+      const favoriteSections = filtered.filter((section) =>
+        sectionHasFavoriteTeacher(section, favoriteTeacherNames)
+      );
+      return {
+        ...course,
+        sections:
+          filterPreferFavorites && favoriteSections.length > 0 ? favoriteSections : filtered,
+      };
+    });
+  }, [
+    courses,
+    effectiveCampuses,
+    effectiveModalities,
+    filterOnlyVacancies,
+    courseModalities,
+    filterPreferFavorites,
+    favoriteTeacherNames,
+  ]);
 
   // Generate combinations
   const allCombinations = useMemo(() => {
@@ -150,6 +174,14 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
       if (filterFreeSaturday && !comb.tags.includes('Sábado libre')) return false;
       if (filterMaxEmptyHours !== null && comb.stats.emptyHours > filterMaxEmptyHours) return false;
       return true;
+    }).sort((a, b) => {
+      const countFav = (comb: ScheduleCombination) =>
+        Object.entries(comb.selectedSections).reduce((sum, [courseId, sectionId]) => {
+          const course = coursesForGenerator.find((c) => c.id === courseId);
+          const section = course?.sections.find((s) => s.id === sectionId);
+          return section && sectionHasFavoriteTeacher(section, favoriteTeacherNames) ? sum + 1 : sum;
+        }, 0);
+      return countFav(b) - countFav(a);
     });
   }, [
     allCombinations,
@@ -159,6 +191,7 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
     filterFreeSaturday,
     filterMaxEmptyHours,
     coursesForGenerator,
+    favoriteTeacherNames,
   ]);
 
   const toggleModality = (modality: GeneratorModality) => {
@@ -213,6 +246,20 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
         ? prev.filter((id) => id !== courseId)
         : [...prev, courseId]
     );
+  };
+
+  const toggleCourseModality = (courseId: string, modality: GeneratorModality | 'all') => {
+    setCourseModalities((prev) => {
+      if (modality === 'all') {
+        return { ...prev, [courseId]: [] };
+      }
+      const current = prev[courseId] || [];
+      if (current.length === 0) return { ...prev, [courseId]: [modality] };
+      if (current.includes(modality)) {
+        return { ...prev, [courseId]: current.filter((item) => item !== modality) };
+      }
+      return { ...prev, [courseId]: [...current, modality] };
+    });
   };
 
   return (
@@ -288,6 +335,70 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                 );
               })}
             </div>
+            {targetCourseIds.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <span className="font-extrabold text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                  Modalidad que quieres para cada curso:
+                </span>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Elige si ese curso debe ser presencial, semipresencial o virtual. Puedes marcar varias. “Cualquiera” usa todas.
+                </p>
+                {coursesForGenerator
+                  .filter((c) => targetCourseIds.includes(c.id))
+                  .map((c) => {
+                    const selectedMods = courseModalities[c.id] || [];
+                    const isAny = selectedMods.length === 0;
+                    return (
+                      <div
+                        key={`mod-${c.id}`}
+                        className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/40 px-2.5 py-2"
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: c.color }}
+                        />
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-100 min-w-[140px] flex-1">
+                          {c.name}
+                        </span>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => toggleCourseModality(c.id, 'all')}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${
+                              isAny
+                                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100'
+                                : 'border-slate-200 dark:border-slate-700 text-slate-500'
+                            }`}
+                          >
+                            Cualquiera
+                          </button>
+                          {ALL_GENERATOR_MODALITIES.map((modality) => {
+                            const isOn = selectedMods.includes(modality);
+                            return (
+                              <button
+                                key={modality}
+                                type="button"
+                                onClick={() => toggleCourseModality(c.id, modality)}
+                                className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${
+                                  isOn
+                                    ? modality === 'Online'
+                                      ? 'bg-indigo-600 text-white border-indigo-600'
+                                      : modality === 'Semipresencial'
+                                        ? 'bg-amber-500 text-slate-950 border-amber-500'
+                                        : 'bg-emerald-600 text-white border-emerald-600'
+                                    : 'border-slate-200 dark:border-slate-700 text-slate-500'
+                                }`}
+                              >
+                                {modality === 'Online' ? 'Virtual' : modality}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
           </div>
 
           {/* Step 2: Optimization Filters */}
@@ -355,6 +466,18 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
               >
                 <Calendar className="w-3.5 h-3.5" />
                 <span>Sábado Libre</span>
+              </button>
+
+              <button
+                onClick={() => setFilterPreferFavorites(!filterPreferFavorites)}
+                className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 ${
+                  filterPreferFavorites
+                    ? 'bg-rose-500 border-rose-500 text-white shadow-xs'
+                    : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                <Heart className={`w-3.5 h-3.5 ${filterPreferFavorites ? 'fill-current' : ''}`} />
+                <span>Usar profes favoritos si dictan el curso</span>
               </button>
 
               <button
@@ -497,6 +620,13 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                 {filteredCombinations.slice(0, visibleCount).map((comb, index) => {
                   const isTopRanked = index === 0 && comb.stats.conflictsCount === 0;
+                  const favoriteCount = Object.entries(comb.selectedSections).reduce((sum, [courseId, sectionId]) => {
+                    const course = coursesForGenerator.find((c) => c.id === courseId);
+                    const section = course?.sections.find((s) => s.id === sectionId);
+                    return section && sectionHasFavoriteTeacher(section, favoriteTeacherNames)
+                      ? sum + 1
+                      : sum;
+                  }, 0);
 
                   return (
                     <div
@@ -517,6 +647,11 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                             {isTopRanked && (
                               <span className="flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-extrabold text-[10px] shadow-xs">
                                 <Flame className="w-3 h-3 fill-current" /> Mejor Opción
+                              </span>
+                            )}
+                            {favoriteCount > 0 && (
+                              <span className="flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 font-extrabold text-[10px]">
+                                <Heart className="w-3 h-3 fill-current" /> {favoriteCount} favorito{favoriteCount === 1 ? '' : 's'}
                               </span>
                             )}
                           </div>

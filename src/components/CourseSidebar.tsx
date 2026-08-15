@@ -25,8 +25,10 @@ import {
   MapPin,
   Sparkles,
   Layers,
+  Heart,
 } from 'lucide-react';
 import { doSessionsOverlap } from '../utils/scheduler';
+import { sectionHasFavoriteTeacher } from '../utils/professors';
 import {
   evaluateCommute,
   LimaDistrict,
@@ -86,6 +88,7 @@ interface CourseSidebarProps {
   userDistrict?: LimaDistrict;
   onUndoLastChange?: () => void;
   canUndo?: boolean;
+  favoriteTeacherNames?: string[];
 }
 
 export const CourseSidebar: React.FC<CourseSidebarProps> = ({
@@ -105,6 +108,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
   userDistrict = 'Santiago de Surco',
   onUndoLastChange,
   canUndo,
+  favoriteTeacherNames = [],
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterModalities, setFilterModalities] = useState<string[]>([]);
@@ -626,7 +630,14 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                             <span>{allSectionDetailsOpen ? 'Acoplar secciones' : 'Ver detalles'}</span>
                           </button>
                         </div>
-                      {course.sections.map((section) => {
+                      {[...course.sections]
+                        .sort((a, b) => {
+                          const aFav = sectionHasFavoriteTeacher(a, favoriteTeacherNames);
+                          const bFav = sectionHasFavoriteTeacher(b, favoriteTeacherNames);
+                          if (aFav === bFav) return 0;
+                          return aFav ? -1 : 1;
+                        })
+                        .map((section) => {
                         const isSectionActive = currentSectionId === section.id;
                         const sectionKey = `${course.id}:${section.id}`;
                         const detailsOpen = !!expandedSections[sectionKey];
@@ -635,6 +646,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                         const primaryCampus = sectionCampusLabel(section);
                         const commute = evaluateCommute(userDistrict, primaryCampus);
                         const modalityLabel = sectionModalityLabel(section);
+                        const isFavoriteTeacher = sectionHasFavoriteTeacher(section, favoriteTeacherNames);
 
                         return (
                           <div
@@ -680,6 +692,12 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                                     >
                                       {modalityLabel}
                                     </span>
+                                    {isFavoriteTeacher && (
+                                      <span className="inline-flex items-center gap-0.5 text-[9px] font-extrabold text-rose-600 dark:text-rose-400">
+                                        <Heart className="w-2.5 h-2.5 fill-current" />
+                                        Favorito
+                                      </span>
+                                    )}
                                   </div>
                                   <p className="text-[10.5px] font-mono font-semibold text-slate-600 dark:text-slate-300 truncate">
                                     {sectionScheduleLabel(section)}
