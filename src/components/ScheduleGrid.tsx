@@ -280,10 +280,10 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                           height: pos.height,
                           borderColor: item.hasConflict ? '#e31e24' : item.course.color,
                           backgroundColor: item.hasConflict
-                            ? (darkMode ? 'rgba(227, 30, 36, 0.28)' : 'rgba(227, 30, 36, 0.15)')
-                            : (darkMode ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.96)'),
+                            ? (darkMode ? 'rgba(227, 30, 36, 0.32)' : 'rgba(227, 30, 36, 0.15)')
+                            : (darkMode ? 'rgba(30, 41, 59, 0.95)' : 'rgba(255, 255, 255, 0.96)'),
                           boxShadow: darkMode
-                            ? `0 2px 8px -1px rgba(0,0,0,0.5), inset 4px 0 0 0 ${item.course.color}`
+                            ? `0 2px 10px -1px rgba(0,0,0,0.6), inset 4px 0 0 0 ${item.course.color}`
                             : `0 1px 4px rgba(0,0,0,0.06), inset 4px 0 0 0 ${item.course.color}`,
                         }}
                         onClick={() =>
@@ -298,13 +298,13 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                           item.hasConflict
                             ? 'conflict-pattern conflict-border-pulse border-2 ring-3 ring-red-500/40 z-20 shadow-md text-red-950 dark:text-red-100'
                             : darkMode
-                            ? 'border-slate-700/80 hover:border-slate-500 hover:shadow-lg'
+                            ? 'border-slate-700 hover:border-slate-400 hover:shadow-lg'
                             : 'border-slate-200 hover:border-slate-400 hover:shadow-md'
                         } ${isHovered ? 'scale-[1.02] z-20 ring-2 ring-slate-800 dark:ring-white shadow-xl' : 'hover:brightness-105'}`}
                       >
                         {/* Subtle background color glow */}
                         <div
-                          className="absolute inset-0 -z-10 pointer-events-none opacity-20 dark:opacity-30"
+                          className="absolute inset-0 -z-10 pointer-events-none opacity-20 dark:opacity-25"
                           style={{
                             backgroundColor: item.hasConflict
                               ? '#e31e24'
@@ -315,7 +315,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                         {/* Top Header inside card */}
                         <div className="relative">
                           <div className="flex items-start justify-between gap-1">
-                            <h4 className="font-extrabold text-[11px] leading-tight line-clamp-2 text-slate-900 dark:text-white">
+                            <h4 className="font-extrabold text-[11px] leading-tight line-clamp-2 text-slate-900 dark:text-slate-100">
                               {item.course.name}
                             </h4>
                             {item.hasConflict && (
@@ -335,19 +335,19 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                               style={{
                                 backgroundColor: `${item.course.color}25`,
                                 borderColor: `${item.course.color}50`,
-                                color: item.course.color,
+                                color: darkMode ? '#ffffff' : item.course.color,
                               }}
                             >
                               {item.section.sectionName.split(' ')[0]}
                             </span>
-                            <span className="text-[9px] font-medium text-slate-500 dark:text-slate-300">
+                            <span className="text-[9px] font-medium text-slate-600 dark:text-slate-300">
                               {item.session.type}
                             </span>
                           </div>
                         </div>
 
                         {/* Middle Info: Classroom / Modality / Teacher */}
-                        <div className="text-[9.5px] space-y-0.5 my-0.5 text-slate-600 dark:text-slate-300 font-medium">
+                        <div className="text-[9.5px] space-y-0.5 my-0.5 text-slate-700 dark:text-slate-200 font-medium">
                           <div className="flex items-center gap-1 truncate">
                             <User className="w-2.5 h-2.5 shrink-0 text-slate-400 dark:text-slate-400" />
                             <span className="truncate">
@@ -356,8 +356,8 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                           </div>
 
                           {item.session.campus && (
-                            <div className="flex items-center gap-1 truncate text-slate-500 dark:text-slate-400 text-[9px]">
-                              <MapPin className="w-2.5 h-2.5 shrink-0 text-slate-400" />
+                            <div className="flex items-center gap-1 truncate text-slate-600 dark:text-slate-300 text-[9px]">
+                              <MapPin className="w-2.5 h-2.5 shrink-0 text-slate-400 dark:text-slate-400" />
                               <span className="truncate">
                                 {item.session.campus} {item.session.classroom ? `• ${item.session.classroom}` : ''}
                               </span>
@@ -366,7 +366,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                         </div>
 
                         {/* Bottom Time Interval */}
-                        <div className="flex items-center justify-between text-[9px] font-mono font-bold pt-0.5 border-t border-slate-200/60 dark:border-slate-800 text-slate-600 dark:text-slate-300">
+                        <div className="flex items-center justify-between text-[9px] font-mono font-bold pt-0.5 border-t border-slate-200/60 dark:border-slate-700 text-slate-700 dark:text-slate-200">
                           <span>
                             {item.session.startTime} - {item.session.endTime}
                           </span>
@@ -549,26 +549,26 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
             <div className="mt-4 space-y-2 text-xs">
               <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-slate-500">Código UPC:</span>
-                <span className="font-mono font-bold">{selectedBlock.course.code}</span>
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Código UPC:</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">{selectedBlock.course.code}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-slate-500">Sección / Grupo:</span>
-                <span className="font-bold">{selectedBlock.section.sectionName}</span>
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Sección / Grupo:</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100">{selectedBlock.section.sectionName}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-slate-500">Horario sesión:</span>
-                <span className="font-bold font-mono">
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Horario sesión:</span>
+                <span className="font-bold font-mono text-slate-900 dark:text-slate-100">
                   {DAY_NAMES[selectedBlock.session.day]} {selectedBlock.session.startTime} - {selectedBlock.session.endTime} ({selectedBlock.session.type})
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-slate-500">Docente:</span>
-                <span className="font-semibold">{selectedBlock.session.teacher || selectedBlock.section.teachers.join(', ')}</span>
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Docente:</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{selectedBlock.session.teacher || selectedBlock.section.teachers.join(', ')}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-slate-500">Modalidad & Sede:</span>
-                <span className="font-semibold">{selectedBlock.session.modality} • {selectedBlock.session.campus || 'UPC'}</span>
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Modalidad & Sede:</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{selectedBlock.session.modality} • {selectedBlock.session.campus || 'UPC'}</span>
               </div>
             </div>
 

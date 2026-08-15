@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  body {
+    @apply transition-colors duration-150;
+  }
+}
+
 @layer utilities {
   .conflict-pattern {
     background-image: repeating-linear-gradient(
@@ -17,8 +25,8 @@
   }
 
   .custom-scrollbar::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 6px;
+    height: 6px;
   }
   .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
@@ -27,8 +35,14 @@
     background: #cbd5e1;
     border-radius: 9999px;
   }
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #334155;
+  }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #94a3b8;
+  }
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #475569;
   }
 }
 
@@ -53,4 +67,5 @@
     display: block !important;
   }
 }
+
 
