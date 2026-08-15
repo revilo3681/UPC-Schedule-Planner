@@ -107,8 +107,8 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
   canUndo,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterModality, setFilterModality] = useState<string>('all');
-  const [filterCampus, setFilterCampus] = useState<string>('all');
+  const [filterModalities, setFilterModalities] = useState<string[]>([]);
+  const [filterCampuses, setFilterCampuses] = useState<string[]>([]);
   const selectedCycleFilter: number | 'all' = currentCycle > 0 ? currentCycle : 'all';
   const [expandedCourses, setExpandedCourses] = useState<Record<string, boolean>>({});
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
@@ -159,13 +159,45 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
     });
   };
 
+  const toggleCampusFilter = (campus: string) => {
+    if (campus === 'all') {
+      setFilterCampuses([]);
+      return;
+    }
+    setFilterCampuses((prev) => {
+      if (prev.length === 0) return [campus];
+      if (prev.includes(campus)) return prev.filter((item) => item !== campus);
+      return [...prev, campus];
+    });
+  };
+
+  const toggleModalityFilter = (modality: string) => {
+    if (modality === 'all') {
+      setFilterModalities([]);
+      return;
+    }
+    setFilterModalities((prev) => {
+      if (prev.length === 0) return [modality];
+      if (prev.includes(modality)) return prev.filter((item) => item !== modality);
+      return [...prev, modality];
+    });
+  };
+
   const sectionMatchesFilters = (section: CourseSection) => {
-    const matchesCampus = section.sessions.some((sess) =>
-      sessionMatchesCampusFilter(sess.campus, filterCampus, sess.modality)
-    );
-    const matchesModality = section.sessions.some((sess) =>
-      sessionMatchesModalityFilter(sess.modality, sess.campus, filterModality)
-    );
+    const matchesCampus =
+      filterCampuses.length === 0 ||
+      section.sessions.some((sess) =>
+        filterCampuses.some((campus) =>
+          sessionMatchesCampusFilter(sess.campus, campus, sess.modality)
+        )
+      );
+    const matchesModality =
+      filterModalities.length === 0 ||
+      section.sessions.some((sess) =>
+        filterModalities.some((modality) =>
+          sessionMatchesModalityFilter(sess.modality, sess.campus, modality)
+        )
+      );
     return matchesCampus && matchesModality;
   };
 
@@ -367,39 +399,45 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
         {/* Campus Filter Pills Bar */}
         <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pt-0.5">
           <span className="text-[11px] font-bold text-slate-400 shrink-0">Sede presencial:</span>
-          {['all', 'Monterrico', 'San Isidro', 'San Miguel', 'Villa'].map((campus) => (
+          {['all', 'Monterrico', 'San Isidro', 'San Miguel', 'Villa'].map((campus) => {
+            const isActive = campus === 'all' ? filterCampuses.length === 0 : filterCampuses.includes(campus);
+            return (
             <button
               key={campus}
-              onClick={() => setFilterCampus(campus)}
+              onClick={() => toggleCampusFilter(campus)}
               className={`px-2 py-0.8 rounded-md text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
-                filterCampus === campus
+                isActive
                   ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-2xs'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
             >
               {campus === 'all' ? 'Todas' : campus}
             </button>
-          ))}
+            );
+          })}
         </div>
 
         <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pt-0.5">
           <span className="text-[11px] font-bold text-slate-400 shrink-0">Modalidad:</span>
-          {['all', 'Presencial', 'Semipresencial', 'Online'].map((mod) => (
+          {['all', 'Presencial', 'Semipresencial', 'Online'].map((mod) => {
+            const isActive = mod === 'all' ? filterModalities.length === 0 : filterModalities.includes(mod);
+            return (
             <button
               key={mod}
-              onClick={() => setFilterModality(mod)}
+              onClick={() => toggleModalityFilter(mod)}
               className={`px-2 py-0.8 rounded-md text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
-                filterModality === mod
+                isActive
                   ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-2xs'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
             >
               {mod === 'all' ? 'Todas' : mod}
             </button>
-          ))}
+            );
+          })}
         </div>
         <p className="text-[10px] text-slate-400 leading-snug">
-          Sede filtra solo clases en campus. Las virtuales se controlan en Modalidad: con “Todas” ves presencial de esa sede y también Online.
+          Puedes marcar varias sedes o modalidades a la vez. “Todas” limpia esa fila. Las virtuales se controlan en Modalidad.
         </p>
       </div>
 
