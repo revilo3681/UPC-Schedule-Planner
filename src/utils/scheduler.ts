@@ -229,23 +229,71 @@ export function generateAllCombinations(
   targetCourseIds: string[]
 ): ScheduleCombination[] {
   const selectedCourses = courses.filter(
-    (c) => targetCourseIds.includes(c.id) && c.sections.length > 0
+    (c) => targetCourseIds.includes(c.id) && c.sections && c.sections.length > 0
   );
 
   if (selectedCourses.length === 0) return [];
 
   const results: ScheduleCombination[] = [];
+  const MAX_RESULTS = 100;
+  const MAX_EVALUATIONS = 15000;
+  let evaluationsCount = 0;
 
-  function backtrack(index: number, currentMap: SelectedCourseMap) {
-    if (index === selectedCourses.length) {
-      const stats = calculateScheduleStats(selectedCourses, currentMap);
-      const tags: string[] = [];
+  // Pre-extract sessions for each section to avoid repeated object accesses
+  interface CachedSection {
+    courseId: string;
+    sectionId: string;
+    sessions: ClassSession[];
+  }
 
-      if (stats.conflictsCount === 0) {
-        tags.push('Sin cruces');
-      } else {
-        tags.push(`${stats.conflictsCount} cruce(s)`);
+  const courseSectionPool: CachedSection[][] = selectedCourses.map((c) =>
+    c.sections.map((s) => ({
+      courseId: c.id,
+      sectionId: s.id,
+      sessions: s.sessions || [],
+    }))
+  );
+
+  // Quick conflict test between a list of placed sessions and a new section's sessions
+  function hasConflictWithPlaced(placed: ClassSession[], newSessions: ClassSession[]): boolean {
+    for (let i = 0; i < placed.length; i++) {
+      const p = placed[i];
+      for (let j = 0; j < newSessions.length; j++) {
+        const n = newSessions[j];
+        if (doSessionsOverlap(p, n)) {
+          return true;
+        }
       }
+    }
+    return false;
+  }
+
+  function countConflicts(placed: ClassSession[]): number {
+    let count = 0;
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        if (doSessionsOverlap(placed[i], placed[j])) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  // Pass 1: Prune aggressively for zero conflicts (Branch-and-Bound)
+  function backtrackZeroConflicts(
+    courseIdx: number,
+    currentMap: SelectedCourseMap,
+    currentPlacedSessions: ClassSession[]
+  ) {
+    if (results.length >= MAX_RESULTS || evaluationsCount >= MAX_EVALUATIONS) {
+      return;
+    }
+
+    if (courseIdx === selectedCourses.length) {
+      evaluationsCount++;
+      const stats = calculateScheduleStats(selectedCourses, currentMap);
+      const tags: string[] = ['Sin cruces'];
 
       if (stats.emptyHours === 0) {
         tags.push('Cero huecos');
@@ -257,10 +305,8 @@ export function generateAllCombinations(
         tags.push(`${stats.daysCount} días`);
       }
 
-      // Check for free Friday/Saturday
-      const active = getActiveSessions(selectedCourses, currentMap);
-      const hasFri = active.some((a) => a.session.day === 'VI');
-      const hasSat = active.some((a) => a.session.day === 'SA');
+      const hasFri = currentPlacedSessions.some((s) => s.day === 'VI');
+      const hasSat = currentPlacedSessions.some((s) => s.day === 'SA');
       if (!hasFri) tags.push('Viernes libre');
       if (!hasSat) tags.push('Sábado libre');
 
@@ -273,16 +319,112 @@ export function generateAllCombinations(
       return;
     }
 
-    const course = selectedCourses[index];
-    for (const section of course.sections) {
-      currentMap[course.id] = section.id;
-      backtrack(index + 1, currentMap);
+    const sections = courseSectionPool[courseIdx];
+    for (const sec of sections) {
+      evaluationsCount++;
+      // PRUNE IMMEDIATELY: If this section overlaps with anything already placed, skip exploring this branch!
+      if (hasConflictWithPlaced(currentPlacedSessions, sec.sessions)) {
+        continue;
+      }
+
+      currentMap[sec.courseId] = sec.sectionId;
+      const nextPlaced = currentPlacedSessions.concat(sec.sessions);
+      backtrackZeroConflicts(courseIdx + 1, currentMap, nextPlaced);
+
+      if (results.length >= MAX_RESULTS || evaluationsCount >= MAX_EVALUATIONS) {
+        return;
+      }
     }
   }
 
-  backtrack(0, {});
+  // Run Pass 1 (Zero conflicts)
+  backtrackZeroConflicts(0, {}, []);
 
-  // Sort combinations: 0 conflicts first, then fewest empty hours, then highest efficiency
+  // Pass 2: If we didn't find enough zero-conflict combinations (e.g. impossible schedule), search allowing minimal conflicts
+  if (results.length < 10 && evaluationsCount < MAX_EVALUATIONS) {
+    const seenCombKeys = new Set(
+      results.map((r) =>
+        Object.entries(r.selectedSections)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([c, s]) => `${c}:${s}`)
+          .join('|')
+      )
+    );
+
+    function backtrackWithMinimalConflicts(
+      courseIdx: number,
+      currentMap: SelectedCourseMap,
+      currentPlacedSessions: ClassSession[]
+    ) {
+      if (results.length >= MAX_RESULTS || evaluationsCount >= MAX_EVALUATIONS) {
+        return;
+      }
+
+      if (courseIdx === selectedCourses.length) {
+        evaluationsCount++;
+        const combKey = Object.entries(currentMap)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([c, s]) => `${c}:${s}`)
+          .join('|');
+
+        if (seenCombKeys.has(combKey)) return;
+        seenCombKeys.add(combKey);
+
+        const stats = calculateScheduleStats(selectedCourses, currentMap);
+        const tags: string[] = [];
+
+        if (stats.conflictsCount === 0) {
+          tags.push('Sin cruces');
+        } else {
+          tags.push(`${stats.conflictsCount} cruce(s)`);
+        }
+
+        if (stats.emptyHours === 0) {
+          tags.push('Cero huecos');
+        } else if (stats.emptyHours <= 3) {
+          tags.push('Muy compacto');
+        }
+
+        if (stats.daysCount <= 4) {
+          tags.push(`${stats.daysCount} días`);
+        }
+
+        const hasFri = currentPlacedSessions.some((s) => s.day === 'VI');
+        const hasSat = currentPlacedSessions.some((s) => s.day === 'SA');
+        if (!hasFri) tags.push('Viernes libre');
+        if (!hasSat) tags.push('Sábado libre');
+
+        results.push({
+          id: `comb-${results.length + 1}`,
+          selectedSections: { ...currentMap },
+          stats,
+          tags,
+        });
+        return;
+      }
+
+      const sections = courseSectionPool[courseIdx];
+      for (const sec of sections) {
+        evaluationsCount++;
+        // Prune if current branch already exceeds 2 conflicts
+        const testPlaced = currentPlacedSessions.concat(sec.sessions);
+        if (countConflicts(testPlaced) > 2) {
+          continue;
+        }
+
+        currentMap[sec.courseId] = sec.sectionId;
+        backtrackWithMinimalConflicts(courseIdx + 1, currentMap, testPlaced);
+
+        if (results.length >= MAX_RESULTS || evaluationsCount >= MAX_EVALUATIONS) {
+          return;
+        }
+      }
+    }
+
+    backtrackWithMinimalConflicts(0, {}, []);
+  }
+
+  // Sort results: zero conflicts first, fewest empty hours, highest efficiency
   results.sort((a, b) => {
     if (a.stats.conflictsCount !== b.stats.conflictsCount) {
       return a.stats.conflictsCount - b.stats.conflictsCount;

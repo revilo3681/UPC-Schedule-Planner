@@ -1,13 +1,5 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
-
-@layer base {
-  body {
-    @apply transition-colors duration-150;
-  }
-}
-
 @layer utilities {
   .conflict-pattern {
     background-image: repeating-linear-gradient(

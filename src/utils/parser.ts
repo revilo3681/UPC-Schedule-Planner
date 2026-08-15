@@ -12,6 +12,7 @@ export function normalizeDay(dayStr: string): DayOfWeek | null {
   if (!dayStr) return null;
   const d = dayStr.trim().toUpperCase();
 
+  // Spanish
   if (d.startsWith('LU') || d.includes('LUN')) return 'LU';
   if (d.startsWith('MA') || d.includes('MAR')) return 'MA';
   if (d.startsWith('MI') || d.includes('MIÉ') || d.includes('MIE')) return 'MI';
@@ -20,24 +21,42 @@ export function normalizeDay(dayStr: string): DayOfWeek | null {
   if (d.startsWith('SA') || d.includes('SÁB') || d.includes('SAB')) return 'SA';
   if (d.startsWith('DO') || d.includes('DOM')) return 'DO';
 
+  // English fallback
+  if (d.startsWith('MO')) return 'LU';
+  if (d.startsWith('TU')) return 'MA';
+  if (d.startsWith('WE')) return 'MI';
+  if (d.startsWith('TH')) return 'JU';
+  if (d.startsWith('FR')) return 'VI';
+  if (d.startsWith('SAT')) return 'SA';
+  if (d.startsWith('SU')) return 'DO';
+
   return null;
 }
 
 export function normalizeTime(tStr: string): string {
   if (!tStr) return '07:00';
-  let clean = tStr.trim().replace('.', ':');
-  const parts = clean.split(':');
-  if (parts.length === 1) {
-    // e.g. "8" or "15" -> "08:00", "15:00"
-    const h = parseInt(parts[0], 10) || 7;
-    return `${h.toString().padStart(2, '0')}:00`;
-  }
-  const h = (parseInt(parts[0], 10) || 7).toString().padStart(2, '0');
-  const m = (parseInt(parts[1], 10) || 0).toString().padStart(2, '0');
-  return `${h}:${m}`;
+  let clean = tStr.trim().toUpperCase();
+
+  // Check 12h AM/PM
+  const isPM = clean.includes('PM') || clean.includes('P.M.');
+  const isAM = clean.includes('AM') || clean.includes('A.M.');
+  clean = clean.replace(/[A-Z.\s]/g, '');
+
+  let parts = clean.split(/[:.]/);
+  let h = parseInt(parts[0], 10) || 7;
+  let m = parts.length > 1 ? parseInt(parts[1], 10) || 0 : 0;
+
+  if (isPM && h < 12) h += 12;
+  if (isAM && h === 12) h = 0;
+
+  h = Math.min(23, Math.max(0, h));
+  m = Math.min(59, Math.max(0, m));
+
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 }
 
 export function parseRomanCycle(str: string): number {
+  if (!str) return 5;
   const s = str.trim().toUpperCase();
   const romanMap: Record<string, number> = {
     I: 1,
@@ -66,8 +85,59 @@ export function parseRomanCycle(str: string): number {
   return isNaN(num) ? 5 : Math.min(10, Math.max(1, num));
 }
 
+export function extractCampus(text: string, defaultCampus: string = 'Monterrico'): string {
+  const upper = text.toUpperCase();
+  if (upper.includes('SAN ISIDRO') || upper.includes('SAN_ISIDRO') || upper.includes('SALAVERRY')) {
+    return 'San Isidro';
+  }
+  if (upper.includes('SAN MIGUEL') || upper.includes('SAN_MIGUEL') || upper.includes('LA MARINA')) {
+    return 'San Miguel';
+  }
+  if (upper.includes('VILLA') || upper.includes('CHORRILLOS')) {
+    return 'Villa';
+  }
+  if (upper.includes('MONTERRICO') || upper.includes('SURCO') || upper.includes('PRIMAVERA')) {
+    return 'Monterrico';
+  }
+  if (upper.includes('ONLINE') || upper.includes('VIRTUAL') || upper.includes('A DISTANCIA') || upper.includes('REMOTO')) {
+    return 'Online';
+  }
+  return defaultCampus;
+}
+
+export function extractModality(text: string, campus: string = 'Monterrico'): Modality {
+  const upper = text.toUpperCase();
+  if (upper.includes('SEMIPRESENCIAL') || upper.includes('SEMI-PRESENCIAL') || upper.includes('HIBRIDO') || upper.includes('HÍBRIDO') || upper.includes('BLENDED')) {
+    return 'Semipresencial';
+  }
+  if (
+    upper.includes('A DISTANCIA') ||
+    upper.includes('VIRTUAL') ||
+    upper.includes('ONLINE') ||
+    upper.includes('REMOTO') ||
+    upper.includes('NO PRESENCIAL') ||
+    upper.includes('TEAMS') ||
+    upper.includes('BLACKBOARD') ||
+    campus === 'Online'
+  ) {
+    return 'A distancia';
+  }
+  return 'Presencial';
+}
+
+export function extractSessionType(text: string): SessionType {
+  const upper = text.toUpperCase();
+  if (upper.includes('LAB') || upper.includes('COMPUTO') || upper.includes('CÓMPUTO')) {
+    return 'Laboratorio';
+  }
+  if (upper.includes('PRAC') || upper.includes('PRÁC') || upper.includes('TALLER')) {
+    return 'Práctica';
+  }
+  return 'Teoría';
+}
+
 /**
- * Parses free text from UPC Banner "Planificar - Encontrar Clases" table
+ * Parses free text and structured blocks from UPC Banner "Planificar - Encontrar Clases"
  */
 export function parseUPCBannerText(rawText: string): Course[] {
   const lines = rawText
@@ -77,116 +147,179 @@ export function parseUPCBannerText(rawText: string): Course[] {
 
   const coursesMap = new Map<string, Course>();
 
-  for (const line of lines) {
-    if (line.startsWith('Periodo:') || line.startsWith('El plan de') || line.startsWith('Regresar a')) {
+  // Check if text is composed of Banner Blocks
+  // Pattern: "Course Name - NRC - Code - Sec X"
+  let currentCourseName = '';
+  let currentCourseCode = '';
+  let currentNrc = '';
+  let currentSectionName = '';
+  let currentTeacher = 'Docente UPC';
+  let currentCampus = 'San Isidro';
+  let currentModality: Modality = 'Presencial';
+  let currentClassroom = 'Aula UPC';
+  let currentType: SessionType = 'Teoría';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (
+      line.startsWith('Periodo:') ||
+      line.startsWith('El plan de') ||
+      line.startsWith('Regresar a') ||
+      line.startsWith('Buscar')
+    ) {
       continue;
     }
 
-    // Match time ranges e.g. "07:00 - 09:59" or "16:00 - 18:59"
-    const timeMatch = line.match(/(\d{1,2}[:.]\d{2})\s*-\s*(\d{1,2}[:.]\d{2})/i);
-    const dayMatches = line.match(/\b(Lun|Mar|Mié|Mie|Jue|Vie|Sáb|Sab|Dom|LU|MA|MI|JU|VI|SA|DO)\b/gi);
+    // Check for Banner Header line: e.g. "Programación Orientada a Objetos - 15969 - 1ASI 0781 - Sec 1"
+    const headerMatch = line.match(/^(.+?)\s*-\s*(\d{4,5})\s*-\s*([A-Z0-9\s]{4,10})\s*-\s*(.+)$/i);
+    if (headerMatch) {
+      currentCourseName = headerMatch[1].trim();
+      currentNrc = headerMatch[2].trim();
+      currentCourseCode = headerMatch[3].trim();
+      currentSectionName = headerMatch[4].trim();
+      continue;
+    }
 
-    // Look for NRC (usually 5 digits e.g. 15969, 15971, 15976)
-    const nrcMatch = line.match(/\b(\d{4,5})\b/);
-    const nrc = nrcMatch ? nrcMatch[1] : `SEC-${Math.floor(Math.random() * 9000 + 1000)}`;
+    // Check for "Tipo: Presencial" or "Tipo: Semipresencial" or "Tipo: A distancia"
+    if (/^Tipo:\s*/i.test(line)) {
+      const modStr = line.replace(/^Tipo:\s*/i, '').trim();
+      currentModality = extractModality(modStr);
+      continue;
+    }
 
-    // Try to extract course name
-    let courseName = 'Curso UPC';
-    const cleanTokens = line.split(/\s{2,}|\t/);
-    if (cleanTokens.length > 1 && cleanTokens[0].length > 3) {
-      courseName = cleanTokens[0].replace(/\s*\.\.\.$/, '').trim();
-    } else {
-      const nameMatch = line.match(/^([A-Za-zÁÉÍÓÚáéíóúñÑ\s]+?)(?:\s+\d[A-Z]{2,4}|\s+\d{4}|\s+\d{5})/);
-      if (nameMatch && nameMatch[1].length > 3) {
-        courseName = nameMatch[1].trim();
+    // Check for "Dónde: Campus San Isidro Edificio B Aula 403"
+    if (/^D[oó]nde:\s*/i.test(line) || /Campus\s+[A-Za-z]+/i.test(line)) {
+      currentCampus = extractCampus(line, currentCampus);
+      if (currentModality === 'A distancia' && !line.toUpperCase().includes('CAMPUS')) {
+        currentCampus = 'Online';
+      }
+      const roomMatch = line.match(/(?:Aula|Lab|Pabell[oó]n|Edificio|Room)\s+([A-Za-z0-9\s-]+)/i);
+      if (roomMatch) {
+        currentClassroom = roomMatch[0].trim();
+      }
+      continue;
+    }
+
+    // Check for "Docentes: Toledo Aller, Lourdes"
+    if (/^Docentes?:\s*/i.test(line)) {
+      currentTeacher = line.replace(/^Docentes?:\s*/i, '').replace(/\(Principal\)/gi, '').trim();
+      continue;
+    }
+
+    // Check for Schedule lines: e.g. "Hora: 07:00 - 09:59" or "Lun, Mié | 07:00 - 09:59"
+    const timeMatch = line.match(/(\d{1,2}[:.]\d{2})\s*(?:-|a|to)\s*(\d{1,2}[:.]\d{2})/i);
+    const dayMatches = line.match(/\b(Lun(?:es)?|Mar(?:tes)?|Mi[eé](?:rcoles)?|Jue(?:ves)?|Vie(?:rnes)?|S[aá]b(?:ado)?|Dom(?:ingo)?|LU|MA|MI|JU|VI|SA|DO)\b/gi);
+
+    if (timeMatch && dayMatches && dayMatches.length > 0) {
+      const startTime = normalizeTime(timeMatch[1]);
+      const endTime = normalizeTime(timeMatch[2]);
+
+      // If we don't have a course name from a header, look in this line or fallback
+      let courseName = currentCourseName || 'Curso UPC';
+      let nrc = currentNrc;
+
+      // Extract NRC if in line
+      const inlineNrc = line.match(/\b(\d{4,5})\b/);
+      if (inlineNrc && !nrc) {
+        nrc = inlineNrc[1];
+      }
+      if (!nrc) {
+        nrc = `NRC-${Math.floor(Math.random() * 9000 + 1000)}`;
+      }
+
+      // Check if line mentions modality/campus/type inline
+      const lineCampus = extractCampus(line, currentCampus);
+      const lineModality = extractModality(line, lineCampus);
+      const lineType = extractSessionType(line);
+
+      // Try to extract course name from tokens if not already found
+      if (courseName === 'Curso UPC') {
+        const cleanTokens = line.split(/\s{2,}|\t|\|/);
+        if (cleanTokens.length > 1 && cleanTokens[0].length > 3) {
+          courseName = cleanTokens[0].replace(/\s*\.\.\.$/, '').trim();
+        } else {
+          const nameMatch = line.match(/^([A-Za-zÁÉÍÓÚáéíóúñÑ\s]+?)(?:\s+\d[A-Z]{2,4}|\s+\d{4}|\s+\d{5})/);
+          if (nameMatch && nameMatch[1].length > 3) {
+            courseName = nameMatch[1].trim();
+          }
+        }
+      }
+
+      // Teacher from line
+      let teacher = currentTeacher;
+      const teacherMatch = line.match(/([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+,\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)/);
+      if (teacherMatch) {
+        teacher = teacherMatch[0];
+      }
+
+      const courseKey = courseName.toUpperCase();
+      let course = coursesMap.get(courseKey);
+      if (!course) {
+        const colorIndex = coursesMap.size % COURSE_COLOR_PALETTE.length;
+        course = {
+          id: `course-${Date.now()}-${coursesMap.size}`,
+          code: currentCourseCode || `UPC-${Math.floor(Math.random() * 900 + 100)}`,
+          name: courseName,
+          credits: 4,
+          cycle: 5,
+          color: COURSE_COLOR_PALETTE[colorIndex],
+          sections: [],
+        };
+        coursesMap.set(courseKey, course);
+      }
+
+      // Find or create section
+      let section = course.sections.find((s) => s.id === nrc || s.sectionName.includes(nrc));
+      if (!section) {
+        section = {
+          id: nrc,
+          sectionName: currentSectionName ? `NRC ${nrc} (${currentSectionName})` : `NRC ${nrc} (${lineCampus})`,
+          courseCode: course.code,
+          teachers: teacher ? [teacher] : ['Docente UPC'],
+          vacancies: '30 de 30 lugares',
+          sessions: [],
+        };
+        course.sections.push(section);
+      } else {
+        if (teacher && !section.teachers.includes(teacher) && teacher !== 'Docente UPC') {
+          section.teachers.push(teacher);
+        }
+      }
+
+      // Create session for each matched day (e.g. "Lun, Mié" -> 2 sessions for that section)
+      for (const dMatch of dayMatches) {
+        const day = normalizeDay(dMatch);
+        if (!day) continue;
+
+        section.sessions.push({
+          id: `sess-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          day,
+          startTime,
+          endTime,
+          type: lineType || currentType,
+          modality: lineModality || currentModality,
+          campus: lineCampus || currentCampus,
+          classroom: currentClassroom || 'Aula UPC',
+          teacher: teacher || 'Docente UPC',
+        });
       }
     }
-
-    // Modality
-    let modality: Modality = 'Presencial';
-    if (/semipresencial/i.test(line)) modality = 'Semipresencial';
-    else if (/a distancia|virtual|online/i.test(line)) modality = 'A distancia';
-
-    // Campus
-    let campus = 'Monterrico';
-    if (/san isidro/i.test(line)) campus = 'San Isidro';
-    else if (/villa/i.test(line)) campus = 'Villa';
-    else if (/san miguel/i.test(line)) campus = 'San Miguel';
-    else if (modality === 'A distancia') campus = 'Online';
-
-    // Session Type
-    let type: SessionType = 'Teoría';
-    if (/laboratorio|lab/i.test(line)) type = 'Laboratorio';
-    else if (/práctica|practica/i.test(line)) type = 'Práctica';
-
-    // Credits
-    const credMatch = line.match(/\b(\d)\s+cr[eé]d|\bcred:\s*(\d)/i);
-    const credits = credMatch ? parseInt(credMatch[1] || credMatch[2], 10) : 4;
-
-    // Days & Times
-    const day = dayMatches && dayMatches.length > 0 ? normalizeDay(dayMatches[0]) || 'LU' : 'LU';
-    const startTime = timeMatch ? normalizeTime(timeMatch[1]) : '08:00';
-    const endTime = timeMatch ? normalizeTime(timeMatch[2]) : '10:00';
-
-    // Teachers
-    const teacherMatch = line.match(/([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+,\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)/);
-    const teacherName = teacherMatch ? teacherMatch[0] : 'Docente UPC';
-
-    const courseKey = courseName.toUpperCase();
-    let course = coursesMap.get(courseKey);
-    if (!course) {
-      const colorIndex = coursesMap.size % COURSE_COLOR_PALETTE.length;
-      course = {
-        id: `course-${Date.now()}-${coursesMap.size}`,
-        code: `UPC-${Math.floor(Math.random() * 900 + 100)}`,
-        name: courseName,
-        credits: credits,
-        cycle: 5,
-        color: COURSE_COLOR_PALETTE[colorIndex],
-        sections: [],
-      };
-      coursesMap.set(courseKey, course);
-    }
-
-    // Check if section exists
-    let section = course.sections.find((s) => s.id === nrc);
-    if (!section) {
-      section = {
-        id: nrc,
-        sectionName: `NRC ${nrc} (${campus})`,
-        courseCode: course.code,
-        teachers: [teacherName],
-        vacancies: '30 de 30 lugares',
-        sessions: [],
-      };
-      course.sections.push(section);
-    } else {
-      if (!section.teachers.includes(teacherName) && teacherName !== 'Docente UPC') {
-        section.teachers.push(teacherName);
-      }
-    }
-
-    section.sessions.push({
-      id: `sess-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      day,
-      startTime,
-      endTime,
-      type,
-      modality,
-      campus,
-      teacher: teacherName,
-    });
   }
 
   return Array.from(coursesMap.values());
 }
 
 /**
- * Parses SumPlus / ChatGPT CSV format e.g.:
- * CICLO,CREDITOS,CURSO,TIPO,HRS,GR,DOCENTE,DIA1,INICIO1,FINAL1,DIA2,INICIO2,FINAL2...
+ * Universal table / CSV / Prompt output parser
+ * Supports:
+ * - ChatGPT prompt format:
+ *   CICLO CREDITOS CURSO TIPO HRS GR DOCENTE SEDE DIA1 INICIO1 FINAL1 DIA2 INICIO2 FINAL2
+ * - Pipe separated / Tab separated rows from Excel, Banner, or Socarrates:
+ *   CURSO | SECCION/NRC | TIPO | MODALIDAD | SEDE | AULA | DOCENTE | DIA | INICIO | FIN
  */
-export function parseCSVFormat(rawCsv: string): Course[] {
-  const lines = rawCsv
+export function parseCSVFormat(rawText: string): Course[] {
+  const lines = rawText
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
@@ -194,51 +327,48 @@ export function parseCSVFormat(rawCsv: string): Course[] {
   const coursesMap = new Map<string, Course>();
 
   for (const line of lines) {
-    if (line.toLowerCase().startsWith('ciclo') || line.toLowerCase().startsWith('codigo')) {
-      continue; // header
+    // Skip headers
+    const lower = line.toLowerCase();
+    if (
+      lower.startsWith('ciclo') ||
+      lower.startsWith('codigo') ||
+      lower.startsWith('código') ||
+      lower.startsWith('curso') ||
+      lower.startsWith('periodo')
+    ) {
+      continue;
     }
 
-    // Split by comma or semicolon or tab or multiple spaces
+    // Delimiter detection
     let parts: string[];
-    if (line.includes(',')) {
-      parts = line.split(',').map((p) => p.trim());
-    } else if (line.includes(';')) {
-      parts = line.split(';').map((p) => p.trim());
+    if (line.includes('|')) {
+      parts = line.split('|').map((p) => p.trim());
     } else if (line.includes('\t')) {
       parts = line.split('\t').map((p) => p.trim());
+    } else if (line.includes(';') || line.includes(',')) {
+      const delim = line.includes(';') ? ';' : ',';
+      parts = line.split(delim).map((p) => p.trim());
     } else {
       parts = parseSpaceSeparatedLine(line);
     }
 
-    if (parts.length < 5) continue;
+    if (parts.length < 4) continue;
 
-    // Try to extract standard columns
-    const cycle = parseRomanCycle(parts[0] || '5');
+    // Check if line contains campus & modality keywords
+    const lineCampus = extractCampus(line, 'Monterrico');
+    const lineModality = extractModality(line, lineCampus);
+
+    // Extract Cycle and Credits if present
+    const cycle = parseRomanCycle(parts[0]);
     const credits = parseInt(parts[1], 10) || 4;
-    const courseName = parts[2] || 'Curso Universitario';
-    const typeStr = parts[3] || 'TEORIA';
-    const groupName = parts[5] || 'G1';
-    let teacher = parts[6] || 'Docente Asignado';
+    const courseName = parts[2] || parts[0] || 'Curso Universitario';
 
-    // Check if line mentions a campus
-    let campus = 'Monterrico';
-    const lineUpper = line.toUpperCase();
-    if (lineUpper.includes('SAN ISIDRO') || lineUpper.includes('SAN_ISIDRO') || lineUpper.includes(' SALAVERRY')) {
-      campus = 'San Isidro';
-    } else if (lineUpper.includes('SAN MIGUEL') || lineUpper.includes('SAN_MIGUEL') || lineUpper.includes(' LA MARINA')) {
-      campus = 'San Miguel';
-    } else if (lineUpper.includes('VILLA') || lineUpper.includes('CHORRILLOS')) {
-      campus = 'Villa';
-    } else if (lineUpper.includes('VIRTUAL') || lineUpper.includes('ONLINE') || lineUpper.includes('A DISTANCIA')) {
-      campus = 'Online';
-    } else if (lineUpper.includes('MONTERRICO') || lineUpper.includes('SURCO')) {
-      campus = 'Monterrico';
-    }
+    // Type detection
+    const lineType = extractSessionType(line);
 
-    const sessionType: SessionType =
-      typeStr.toUpperCase().includes('LAB') ? 'Laboratorio' : 'Teoría';
-
-    const modality: Modality = campus === 'Online' ? 'A distancia' : 'Presencial';
+    // Group / NRC
+    const groupName = parts[5] || parts[1] || 'G1';
+    const teacher = parts[6] && parts[6].length > 3 && !normalizeDay(parts[6]) ? parts[6] : 'Docente Asignado';
 
     const courseKey = courseName.toUpperCase().trim();
     let course = coursesMap.get(courseKey);
@@ -260,7 +390,7 @@ export function parseCSVFormat(rawCsv: string): Course[] {
     if (!section) {
       section = {
         id: `sec-${course.id}-${groupName}`,
-        sectionName: `${groupName} (${campus})`,
+        sectionName: `${groupName} (${lineCampus})`,
         courseCode: course.code,
         teachers: teacher ? [teacher] : [],
         vacancies: '35 / 40',
@@ -269,39 +399,36 @@ export function parseCSVFormat(rawCsv: string): Course[] {
       course.sections.push(section);
     }
 
-    // Now look for Day + Start + End pairs from index 7 onwards
-    let idx = 7;
+    // Now look for Day + Start + End pairs across the remaining tokens
+    let idx = 3;
     while (idx < parts.length) {
-      // Check if current token is a campus name (e.g. "SAN_ISIDRO")
-      const tokenUpper = parts[idx].toUpperCase();
-      if (tokenUpper === 'MONTERRICO' || tokenUpper === 'SAN_ISIDRO' || tokenUpper === 'SAN_MIGUEL' || tokenUpper === 'VILLA' || tokenUpper === 'ONLINE') {
-        if (tokenUpper === 'SAN_ISIDRO') campus = 'San Isidro';
-        else if (tokenUpper === 'SAN_MIGUEL') campus = 'San Miguel';
-        else if (tokenUpper === 'VILLA') campus = 'Villa';
-        else if (tokenUpper === 'ONLINE') campus = 'Online';
-        else if (tokenUpper === 'MONTERRICO') campus = 'Monterrico';
-        idx++;
-        continue;
-      }
+      const token = parts[idx].trim();
+      const dayCandidate = normalizeDay(token);
 
-      const dayCandidate = normalizeDay(parts[idx]);
       if (dayCandidate && parts[idx + 1] && parts[idx + 2]) {
-        const sTime = normalizeTime(parts[idx + 1]);
-        const eTime = normalizeTime(parts[idx + 2]);
-        section.sessions.push({
-          id: `s-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          day: dayCandidate,
-          startTime: sTime,
-          endTime: eTime,
-          type: sessionType,
-          modality: modality,
-          campus: campus,
-          teacher: teacher,
-        });
-        idx += 3;
-      } else {
-        idx++;
+        const sTimeCandidate = parts[idx + 1].trim();
+        const eTimeCandidate = parts[idx + 2].trim();
+
+        if (/\d{1,2}[:.]\d{2}/.test(sTimeCandidate) && /\d{1,2}[:.]\d{2}/.test(eTimeCandidate)) {
+          const sTime = normalizeTime(sTimeCandidate);
+          const eTime = normalizeTime(eTimeCandidate);
+
+          section.sessions.push({
+            id: `s-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            day: dayCandidate,
+            startTime: sTime,
+            endTime: eTime,
+            type: lineType,
+            modality: lineModality,
+            campus: lineCampus,
+            classroom: lineModality === 'A distancia' ? 'Aula Virtual' : 'Aula UPC',
+            teacher: teacher,
+          });
+          idx += 3;
+          continue;
+        }
       }
+      idx++;
     }
   }
 
@@ -310,23 +437,23 @@ export function parseCSVFormat(rawCsv: string): Course[] {
 
 function parseSpaceSeparatedLine(line: string): string[] {
   // Regex parsing for space-separated format:
-  // "III 5 ÁLGEBRA LINEAL TEORIA 5 G1 LUNES 12:00 15:00 MARTES 12:00 14:00"
+  // "V 5 PROGRAMACIÓN ORIENTADA A OBJETOS TEORIA 0 15969 TOLEDO ALLER LOURDES SAN_ISIDRO LUNES 07:00 10:00 MIERCOLES 07:00 10:00"
   const tokens = line.split(/\s+/);
   if (tokens.length < 6) return tokens;
 
   const cycle = tokens[0];
   const credits = tokens[1];
 
-  // Find where TEORIA or LABORATORIO starts
+  // Find where TEORIA, LABORATORIO, PRACTICA starts
   let typeIndex = tokens.findIndex((t) => /^(TEORIA|TEORÍA|LABORATORIO|LAB|PRÁCTICA|PRACTICA)$/i.test(t));
   if (typeIndex === -1) typeIndex = 3;
 
   const courseName = tokens.slice(2, typeIndex).join(' ');
   const type = tokens[typeIndex] || 'TEORIA';
-  const hours = tokens[typeIndex + 1] || '4';
+  const hours = tokens[typeIndex + 1] || '0';
   const group = tokens[typeIndex + 2] || 'G1';
 
-  // Find where days or times begin
+  // Find where SEDE, DAYS or TIMES begin
   let remaining = tokens.slice(typeIndex + 3);
   let teacherTokens: string[] = [];
   let scheduleTokens: string[] = [];
@@ -334,8 +461,9 @@ function parseSpaceSeparatedLine(line: string): string[] {
   for (let i = 0; i < remaining.length; i++) {
     const isDay = normalizeDay(remaining[i]) !== null;
     const isTime = /\d{1,2}[:.]\d{2}/.test(remaining[i]);
+    const isCampus = /^(MONTERRICO|SAN_ISIDRO|SAN_MIGUEL|VILLA|ONLINE|SAN|SURCO|CHORRILLOS)$/i.test(remaining[i]);
 
-    if (isDay || isTime) {
+    if (isDay || isTime || isCampus) {
       scheduleTokens = remaining.slice(i);
       break;
     } else {
@@ -377,19 +505,21 @@ export function parseSmartSchedule(input: string): Course[] {
     }
   }
 
-  // 2. Check if UPC Banner format (contains "Tipo: Presencial" or "NRC" or "Planificar" or "de 30 lugares")
+  // 2. Check if UPC Banner format (contains "Tipo: Presencial" or "NRC" or "Planificar" or "de 30 lugares" or dashes format)
   if (
     clean.includes('Tipo:') ||
     clean.includes('Planificar') ||
     clean.includes('de 30') ||
     clean.includes('¡Restricción!') ||
-    clean.includes('Semipresencial')
+    clean.includes('Semipresencial') ||
+    clean.includes('Docentes:') ||
+    clean.includes('Horarios de las clases')
   ) {
-    const results = parseUPCBannerText(clean);
-    if (results.length > 0) return results;
+    const bannerResults = parseUPCBannerText(clean);
+    if (bannerResults.length > 0) return bannerResults;
   }
 
-  // 3. Try CSV / ChatGPT prompt table parser
+  // 3. Try CSV / Table / Prompt format parser
   const csvResults = parseCSVFormat(clean);
   if (csvResults.length > 0) return csvResults;
 

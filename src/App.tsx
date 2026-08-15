@@ -38,6 +38,44 @@ const STORAGE_KEY_DARK = 'sumplus_upc_dark_v1';
 const STORAGE_KEY_DISTRICT = 'sumplus_upc_district_v1';
 const STORAGE_KEY_PROFILE = 'sumplus_upc_profile_v2';
 
+// Helper to sanitize courses safely
+function sanitizeCourses(rawCourses: any[]): Course[] {
+  if (!Array.isArray(rawCourses) || rawCourses.length === 0) return UPC_SAMPLE_COURSES;
+  return rawCourses.map((c, cIdx) => {
+    const courseId = String(c.id || `course-${cIdx}`);
+    return {
+      id: courseId,
+      code: String(c.code || 'UPC-001'),
+      name: String(c.name || 'Curso'),
+      credits: Number(c.credits) || 3,
+      cycle: Number(c.cycle) || 1,
+      color: String(c.color || '#3b82f6'),
+      sections: Array.isArray(c.sections)
+        ? c.sections.map((s: any, sIdx: number) => ({
+            id: String(s.id || `sec-${courseId}-${sIdx}`),
+            sectionName: String(s.sectionName || `G${sIdx + 1}`),
+            courseId: courseId,
+            teachers: Array.isArray(s.teachers) ? s.teachers.map(String) : [],
+            vacancies: s.vacancies ? String(s.vacancies) : undefined,
+            sessions: Array.isArray(s.sessions)
+              ? s.sessions.map((sess: any, sessIdx: number) => ({
+                  id: String(sess.id || `sess-${courseId}-${sIdx}-${sessIdx}`),
+                  day: sess.day || 'LU',
+                  startTime: String(sess.startTime || '07:00'),
+                  endTime: String(sess.endTime || '09:00'),
+                  type: sess.type || 'Teoría',
+                  modality: sess.modality || 'Presencial',
+                  campus: sess.campus || 'San Isidro',
+                  classroom: sess.classroom ? String(sess.classroom) : '',
+                  teacher: sess.teacher ? String(sess.teacher) : '',
+                }))
+              : [],
+          }))
+        : [],
+    };
+  });
+}
+
 export default function App() {
   // Theme state
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -86,12 +124,14 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return sanitizeCourses(parsed);
+        }
       } catch {
         // fallback
       }
     }
-    return UPC_SAMPLE_COURSES;
+    return sanitizeCourses(UPC_SAMPLE_COURSES);
   });
 
   // Selected sections map { courseId: sectionId }
