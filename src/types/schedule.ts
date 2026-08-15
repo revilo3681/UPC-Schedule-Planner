@@ -69,6 +69,7 @@ export interface ScheduleCombination {
   tags: string[]; // e.g. ["Sin cruces", "Viernes libre", "Compacto", "Mañanas"]
   isPartial?: boolean;
   droppedCourseNames?: string[];
+  substitutedCourseNames?: string[];
 }
 
 export const DAY_NAMES: Record<DayOfWeek, string> = {
