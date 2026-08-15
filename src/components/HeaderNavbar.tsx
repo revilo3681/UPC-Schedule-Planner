@@ -16,6 +16,7 @@ import {
   Moon,
   MapPin,
   Edit3,
+  Github,
 } from 'lucide-react';
 import { ScheduleStats, StudentProfile } from '../types/schedule';
 import { LimaDistrict, LIMA_DISTRICTS } from '../utils/distance';
@@ -91,8 +92,19 @@ export const HeaderNavbar: React.FC<HeaderNavbarProps> = ({
                 UPC Schedule Planner
               </h1>
               <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-100 text-[#e31e24] dark:bg-red-950 dark:text-red-300 border border-red-200 dark:border-red-900">
-                SumPlus
+                Plus
               </span>
+              <a
+                href="https://github.com/revilo3681/UPC-Schedule-Planner"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Ver el proyecto en GitHub"
+                className="inline-flex items-center gap-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+              >
+                <span className="uppercase text-slate-400 dark:text-slate-500">Creado</span>
+                <Github className="w-3 h-3" />
+                <span>revilo3681</span>
+              </a>
             </div>
             <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate max-w-[280px] sm:max-w-none">
               Ciclo 2026-02 • {profile.career || 'Facultad de Ingeniería'}
