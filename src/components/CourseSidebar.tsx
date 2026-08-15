@@ -27,7 +27,47 @@ import {
   Layers,
 } from 'lucide-react';
 import { doSessionsOverlap } from '../utils/scheduler';
-import { evaluateCommute, LimaDistrict, getInterCampusTravelTime, UPC_CAMPUSES } from '../utils/distance';
+import {
+  evaluateCommute,
+  LimaDistrict,
+  getInterCampusTravelTime,
+  sessionMatchesCampusFilter,
+  sessionMatchesModalityFilter,
+} from '../utils/distance';
+
+function uniqueMeetings(section: CourseSection) {
+  const seen = new Set<string>();
+  return section.sessions.filter((sess) => {
+    const key = `${sess.day}|${sess.startTime}|${sess.endTime}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function sectionScheduleLabel(section: CourseSection): string {
+  const meetings = uniqueMeetings(section);
+  if (meetings.length === 0) return 'Sin horario';
+  return meetings.map((sess) => `${sess.day} ${sess.startTime}–${sess.endTime}`).join(' · ');
+}
+
+function sectionModalityLabel(section: CourseSection): string {
+  const mods = new Set(section.sessions.map((sess) => sess.modality));
+  if (mods.has('A distancia') && mods.size === 1) return 'Virtual';
+  if (mods.has('Virtual') && mods.size === 1) return 'Virtual';
+  if (mods.has('Semipresencial') || mods.size > 1) return 'Semipresencial';
+  return 'Presencial';
+}
+
+function sectionCampusLabel(section: CourseSection): string {
+  const physical = section.sessions.find((sess) => sess.campus && sess.campus !== 'Online');
+  return physical?.campus || section.sessions[0]?.campus || 'Online';
+}
+
+function formatClassroom(classroom?: string): string {
+  if (!classroom) return '';
+  return /^aula\b/i.test(classroom) ? classroom : `Aula ${classroom}`;
+}
 
 interface CourseSidebarProps {
   courses: Course[];
@@ -44,6 +84,8 @@ interface CourseSidebarProps {
   onCycleChange?: (cycle: number) => void;
   darkMode: boolean;
   userDistrict?: LimaDistrict;
+  onUndoLastChange?: () => void;
+  canUndo?: boolean;
 }
 
 export const CourseSidebar: React.FC<CourseSidebarProps> = ({
@@ -61,13 +103,15 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
   onCycleChange,
   darkMode,
   userDistrict = 'Santiago de Surco',
+  onUndoLastChange,
+  canUndo,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterModality, setFilterModality] = useState<string>('all');
   const [filterCampus, setFilterCampus] = useState<string>('all');
-  const [selectedCycleFilter, setSelectedCycleFilter] = useState<number | 'all'>('all');
-  // State: Record of courseId -> boolean (true = collapsed, false/undefined = open)
-  const [collapsedCourses, setCollapsedCourses] = useState<Record<string, boolean>>({});
+  const selectedCycleFilter: number | 'all' = currentCycle > 0 ? currentCycle : 'all';
+  const [expandedCourses, setExpandedCourses] = useState<Record<string, boolean>>({});
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [editingColorCourseId, setEditingColorCourseId] = useState<string | null>(null);
   const [deletedToast, setDeletedToast] = useState<string | null>(null);
 
@@ -79,63 +123,75 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
   };
 
   const toggleCollapse = (courseId: string) => {
-    setCollapsedCourses((prev) => ({
+    setExpandedCourses((prev) => ({
       ...prev,
       [courseId]: !prev[courseId],
     }));
   };
 
-  // Expand all courses
   const handleExpandAll = () => {
-    setCollapsedCourses({});
-  };
-
-  // Collapse all courses
-  const handleCollapseAll = () => {
-    const allCollapsed: Record<string, boolean> = {};
+    const next: Record<string, boolean> = {};
     courses.forEach((c) => {
-      allCollapsed[c.id] = true;
+      next[c.id] = true;
     });
-    setCollapsedCourses(allCollapsed);
+    setExpandedCourses(next);
   };
 
-  // Filter courses
-  const filteredCourses = courses.filter((c) => {
-    if (selectedCycleFilter !== 'all' && c.cycle !== selectedCycleFilter) {
-      return false;
-    }
+  const handleCollapseAll = () => {
+    setExpandedCourses({});
+    setExpandedSections({});
+  };
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchName = c.name.toLowerCase().includes(q);
-      const matchCode = c.code.toLowerCase().includes(q);
-      const matchTeacher = c.sections.some((s) =>
-        s.teachers.some((t) => t.toLowerCase().includes(q))
-      );
-      if (!matchName && !matchCode && !matchTeacher) return false;
-    }
+  const toggleSectionDetails = (sectionKey: string) => {
+    setExpandedSections((prev) => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey],
+    }));
+  };
 
-    if (filterCampus !== 'all') {
-      const hasCampus = c.sections.some((s) =>
-        s.sessions.some((sess) => {
-          if (filterCampus === 'Online') {
-            return sess.campus === 'Online' || sess.modality === 'A distancia' || sess.modality === 'Virtual';
-          }
-          return sess.campus === filterCampus;
-        })
-      );
-      if (!hasCampus) return false;
-    }
+  const setCourseSectionsExpanded = (course: Course, open: boolean) => {
+    setExpandedSections((prev) => {
+      const next = { ...prev };
+      course.sections.forEach((section) => {
+        next[`${course.id}:${section.id}`] = open;
+      });
+      return next;
+    });
+  };
 
-    if (filterModality !== 'all') {
-      const hasModality = c.sections.some((s) =>
-        s.sessions.some((sess) => sess.modality === filterModality)
-      );
-      if (!hasModality) return false;
-    }
+  const sectionMatchesFilters = (section: CourseSection) => {
+    const matchesCampus = section.sessions.some((sess) =>
+      sessionMatchesCampusFilter(sess.campus, filterCampus, sess.modality)
+    );
+    const matchesModality = section.sessions.some((sess) =>
+      sessionMatchesModalityFilter(sess.modality, sess.campus, filterModality)
+    );
+    return matchesCampus && matchesModality;
+  };
 
-    return true;
-  });
+  // Filter courses, then only show sections that match sede / modalidad
+  const filteredCourses = courses
+    .filter((c) => {
+      if (selectedCycleFilter !== 'all' && c.cycle !== selectedCycleFilter) {
+        return false;
+      }
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = c.name.toLowerCase().includes(q);
+        const matchCode = c.code.toLowerCase().includes(q);
+        const matchTeacher = c.sections.some((s) =>
+          s.teachers.some((t) => t.toLowerCase().includes(q))
+        );
+        if (!matchName && !matchCode && !matchTeacher) return false;
+      }
+
+      return c.sections.some(sectionMatchesFilters);
+    })
+    .map((c) => ({
+      ...c,
+      sections: c.sections.filter(sectionMatchesFilters),
+    }));
 
   // Check if a section would produce a conflict if selected
   const wouldSectionConflict = (course: Course, section: CourseSection) => {
@@ -194,20 +250,32 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
     (a: number, b: number) => a - b
   );
 
-  const areAllCollapsed = courses.length > 0 && courses.every((c) => !!collapsedCourses[c.id]);
+  const areAllCollapsed = courses.length > 0 && courses.every((c) => !expandedCourses[c.id]);
 
   return (
     <aside
       id="course-sidebar-container"
-      className={`w-full rounded-2xl border p-3.5 sm:p-4 flex flex-col gap-3 shadow-xs transition-colors relative ${
+      className={`no-print w-full rounded-2xl border p-3.5 sm:p-4 flex flex-col gap-3 shadow-xs transition-colors relative ${
         darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
       }`}
     >
       {/* Toast Notification */}
       {deletedToast && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg flex items-center gap-1.5 animate-in fade-in slide-in-from-top-2">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
           <span>✓</span>
           <span>{deletedToast}</span>
+          {canUndo && onUndoLastChange && (
+            <button
+              type="button"
+              onClick={() => {
+                onUndoLastChange();
+                setDeletedToast(null);
+              }}
+              className="underline underline-offset-2 font-extrabold"
+            >
+              Deshacer
+            </button>
+          )}
         </div>
       )}
 
@@ -265,7 +333,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
             <span>Ciclo:</span>
           </span>
           <button
-            onClick={() => setSelectedCycleFilter('all')}
+            onClick={() => onCycleChange?.(0)}
             className={`px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
               selectedCycleFilter === 'all'
                 ? 'bg-[#e31e24] text-white shadow-2xs'
@@ -280,10 +348,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
             return (
               <button
                 key={cyc}
-                onClick={() => {
-                  setSelectedCycleFilter(cyc);
-                  if (onCycleChange) onCycleChange(cyc);
-                }}
+                onClick={() => onCycleChange?.(cyc)}
                 className={`px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1 ${
                   selectedCycleFilter === cyc
                     ? 'bg-[#e31e24] text-white shadow-2xs'
@@ -301,8 +366,8 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
 
         {/* Campus Filter Pills Bar */}
         <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pt-0.5">
-          <span className="text-[11px] font-bold text-slate-400 shrink-0">Sede:</span>
-          {['all', 'Monterrico', 'San Isidro', 'San Miguel', 'Villa', 'Online'].map((campus) => (
+          <span className="text-[11px] font-bold text-slate-400 shrink-0">Sede presencial:</span>
+          {['all', 'Monterrico', 'San Isidro', 'San Miguel', 'Villa'].map((campus) => (
             <button
               key={campus}
               onClick={() => setFilterCampus(campus)}
@@ -316,6 +381,26 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
             </button>
           ))}
         </div>
+
+        <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pt-0.5">
+          <span className="text-[11px] font-bold text-slate-400 shrink-0">Modalidad:</span>
+          {['all', 'Presencial', 'Semipresencial', 'Online'].map((mod) => (
+            <button
+              key={mod}
+              onClick={() => setFilterModality(mod)}
+              className={`px-2 py-0.8 rounded-md text-[11px] font-bold whitespace-nowrap transition cursor-pointer ${
+                filterModality === mod
+                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              {mod === 'all' ? 'Todas' : mod}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-400 leading-snug">
+          Sede filtra solo clases en campus. Las virtuales se controlan en Modalidad: con “Todas” ves presencial de esa sede y también Online.
+        </p>
       </div>
 
       {/* Course List & Groups Accordions */}
@@ -351,7 +436,10 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
           filteredCourses.map((course) => {
             const currentSectionId = selectedSections[course.id];
             const isSelected = !!currentSectionId;
-            const isCollapsed = !!collapsedCourses[course.id];
+            const isCollapsed = !expandedCourses[course.id];
+            const courseSectionKeys = course.sections.map((s) => `${course.id}:${s.id}`);
+            const allSectionDetailsOpen =
+              course.sections.length > 0 && courseSectionKeys.every((key) => !!expandedSections[key]);
             const activeSectionObj = isSelected
               ? course.sections.find((s) => s.id === currentSectionId)
               : null;
@@ -479,53 +567,89 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                   </div>
                 )}
 
-                {/* Sections Table & Detail list */}
                 {!isCollapsed && (
-                  <div className="p-3 pt-1.5 space-y-2 border-t border-slate-100 dark:border-slate-800/80">
+                  <div className="p-2.5 pt-1.5 space-y-1.5 border-t border-slate-100 dark:border-slate-800/80">
                     {course.sections.length === 0 ? (
                       <div className="py-4 text-center text-xs text-slate-400">
                         No hay secciones registradas para este curso.
                       </div>
                     ) : (
-                      course.sections.map((section) => {
+                      <>
+                        <div className="flex items-center justify-end px-0.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCourseSectionsExpanded(course, !allSectionDetailsOpen);
+                            }}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1 transition cursor-pointer"
+                            title={allSectionDetailsOpen ? 'Acoplar todas las secciones' : 'Ver docente y sesiones de cada sección'}
+                          >
+                            <Layers className="w-3 h-3" />
+                            <span>{allSectionDetailsOpen ? 'Acoplar secciones' : 'Ver detalles'}</span>
+                          </button>
+                        </div>
+                      {course.sections.map((section) => {
                         const isSectionActive = currentSectionId === section.id;
+                        const sectionKey = `${course.id}:${section.id}`;
+                        const detailsOpen = !!expandedSections[sectionKey];
                         const conflictCheck = wouldSectionConflict(course, section);
                         const interCampusCheck = checkInterCampusWarning(course, section);
-                        const primaryCampus = section.sessions[0]?.campus || 'San Isidro';
+                        const primaryCampus = sectionCampusLabel(section);
                         const commute = evaluateCommute(userDistrict, primaryCampus);
+                        const modalityLabel = sectionModalityLabel(section);
 
                         return (
                           <div
                             key={section.id}
                             id={`section-item-${section.id}`}
-                            onClick={() => {
-                              if (isSectionActive) {
-                                onDeselectCourse(course.id);
-                              } else {
-                                onSelectSection(course.id, section.id);
-                              }
-                            }}
-                            className={`group/sec relative p-3 rounded-xl border text-xs transition cursor-pointer select-none ${
+                            className={`group/sec relative rounded-xl border text-xs transition select-none ${
                               isSectionActive
                                 ? 'border-[#e31e24] dark:border-red-600 bg-red-50/70 dark:bg-red-950/50 shadow-xs ring-1 ring-red-500/20'
                                 : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 hover:border-slate-300 dark:hover:border-slate-700 shadow-2xs'
                             }`}
                           >
-                            {/* Row 1: Section Name, Select Radio, Campus Commute badge & Vacancies & Delete section */}
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div className="flex items-center gap-2">
+                            <div
+                              onClick={() => {
+                                if (isSectionActive) {
+                                  onDeselectCourse(course.id);
+                                } else {
+                                  onSelectSection(course.id, section.id);
+                                }
+                              }}
+                              className="flex items-center justify-between gap-2 flex-wrap p-2 cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
                                 {isSectionActive ? (
                                   <CheckCircle2 className="w-4 h-4 text-[#e31e24] dark:text-red-400 shrink-0" />
                                 ) : (
                                   <Circle className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />
                                 )}
-                                <span className="font-extrabold text-sm text-slate-900 dark:text-slate-100">
-                                  Sección {section.sectionName}
-                                </span>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-extrabold text-[12px] text-slate-900 dark:text-slate-100">
+                                      {section.sectionName.startsWith('NRC') || section.sectionName.startsWith('Sección')
+                                        ? section.sectionName
+                                        : `NRC ${section.sectionName}`}
+                                    </span>
+                                    <span
+                                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                        modalityLabel === 'Virtual'
+                                          ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
+                                          : modalityLabel === 'Semipresencial'
+                                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                                          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                      }`}
+                                    >
+                                      {modalityLabel}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10.5px] font-mono font-semibold text-slate-600 dark:text-slate-300 truncate">
+                                    {sectionScheduleLabel(section)}
+                                  </p>
+                                </div>
                               </div>
 
                               <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                                {/* Commute proximity badge */}
                                 {primaryCampus !== 'Online' && (
                                   <span
                                     className={`px-1.5 py-0.5 rounded-full text-[9.5px] font-bold border flex items-center gap-0.5 ${
@@ -541,6 +665,11 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                                     <span>~{commute.minutes}m</span>
                                   </span>
                                 )}
+                                {primaryCampus === 'Online' && (
+                                  <span className="px-1.5 py-0.5 rounded-full text-[9.5px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300">
+                                    Online
+                                  </span>
+                                )}
 
                                 {conflictCheck.conflicts && !isSectionActive && (
                                   <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-red-100 text-[#e31e24] dark:bg-red-950 dark:text-red-300 font-bold text-[9.5px] border border-red-200 dark:border-red-900">
@@ -550,11 +679,10 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
 
                                 {section.vacancies && (
                                   <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                                    Vacantes: {section.vacancies}
+                                    {section.vacancies}
                                   </span>
                                 )}
 
-                                {/* Delete Section button */}
                                 {onDeleteSection && (
                                   <button
                                     onClick={(e) => {
@@ -568,96 +696,94 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 )}
+
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleSectionDetails(sectionKey);
+                                  }}
+                                  className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                                  title={detailsOpen ? 'Acoplar esta sección' : 'Ver docente y sesiones'}
+                                >
+                                  {detailsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                </button>
                               </div>
                             </div>
 
-                            {/* Inter-Campus Travel Warning if any */}
                             {interCampusCheck.hasCommuteIssue && !isSectionActive && (
-                              <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-900">
+                              <div className="mx-2 mb-2 flex items-center gap-1.5 text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-900">
                                 <Navigation className="w-3 h-3 shrink-0 text-amber-600" />
                                 <span>{interCampusCheck.msg}</span>
                               </div>
                             )}
 
-                            {/* Row 2: Teachers (Fully visible, wrapping nicely) */}
-                            {section.teachers.length > 0 && (
-                              <div className="mt-2 p-2 rounded-lg bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60">
-                                <div className="flex items-start gap-1.5">
-                                  <User className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-0.5" />
-                                  <div className="flex-1 text-[11px] font-semibold text-slate-800 dark:text-slate-200 leading-snug break-words">
-                                    <span className="text-[9.5px] uppercase font-bold text-slate-400 dark:text-slate-400 block mb-0.5">
-                                      {section.teachers.length === 1 ? 'Docente:' : 'Docentes:'}
-                                    </span>
-                                    {section.teachers.join(', ')}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Row 3: Class Schedule Sessions (Full details, Day, Hours, Sede, Aula, Modality) */}
-                            <div className="mt-2 space-y-1.5">
-                              <span className="text-[9.5px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-400 block px-0.5">
-                                Horarios y Sesiones:
-                              </span>
-                              {section.sessions.map((sess, idx) => (
-                                <div
-                                  key={sess.id || `sess-${idx}`}
-                                  className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/95 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-300 space-y-1.5"
-                                >
-                                  {/* Top line: Day, Time, Type Badge, Modality Badge */}
-                                  <div className="flex items-center justify-between gap-1.5 flex-wrap">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950 text-[#e31e24] dark:text-red-400 font-extrabold text-[10.5px] font-mono border border-red-200 dark:border-red-900/60">
-                                        {sess.day}
-                                      </span>
-                                      <span className="font-mono font-bold text-[11px] text-slate-900 dark:text-slate-100">
-                                        {sess.startTime} - {sess.endTime}
-                                      </span>
-                                    </div>
-
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
-                                        {sess.type}
-                                      </span>
-                                      <span
-                                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                                          sess.modality === 'A distancia' || sess.modality === 'Virtual'
-                                            ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
-                                            : sess.modality === 'Semipresencial'
-                                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-                                            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                                        }`}
-                                      >
-                                        {sess.modality === 'A distancia' ? 'Online' : sess.modality}
-                                      </span>
+                            {detailsOpen && (
+                              <div className="px-2.5 pb-2.5 space-y-1.5">
+                                {section.teachers.length > 0 && (
+                                  <div className="p-2 rounded-lg bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60">
+                                    <div className="flex items-start gap-1.5">
+                                      <User className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-0.5" />
+                                      <div className="flex-1 text-[11px] font-semibold text-slate-800 dark:text-slate-200 leading-snug break-words">
+                                        <span className="text-[9.5px] uppercase font-bold text-slate-400 block mb-0.5">
+                                          {section.teachers.length === 1 ? 'Docente:' : 'Docentes:'}
+                                        </span>
+                                        {section.teachers.join(', ')}
+                                      </div>
                                     </div>
                                   </div>
+                                )}
 
-                                  {/* Bottom line: Campus / Sede + Classroom / Aula */}
-                                  <div className="flex items-center justify-between gap-1 text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-700/60 flex-wrap">
-                                    <div className="flex items-center gap-1">
+                                <span className="text-[9.5px] uppercase font-bold tracking-wider text-slate-400 block px-0.5">
+                                  Horarios y sesiones
+                                </span>
+                                {uniqueMeetings(section).map((sess, idx) => (
+                                  <div
+                                    key={sess.id || `sess-${idx}`}
+                                    className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/95 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-300 space-y-1.5"
+                                  >
+                                    <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950 text-[#e31e24] dark:text-red-400 font-extrabold text-[10.5px] font-mono border border-red-200 dark:border-red-900/60">
+                                          {sess.day}
+                                        </span>
+                                        <span className="font-mono font-bold text-[11px] text-slate-900 dark:text-slate-100">
+                                          {sess.startTime} – {sess.endTime}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+                                          {sess.type}
+                                        </span>
+                                        <span
+                                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                            sess.modality === 'A distancia' || sess.modality === 'Virtual'
+                                              ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
+                                              : sess.modality === 'Semipresencial'
+                                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                          }`}
+                                        >
+                                          {sess.modality === 'A distancia' ? 'Virtual' : sess.modality}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-700/60">
                                       <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
                                       <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                        {sess.campus || 'San Isidro'}
+                                        {sess.campus || primaryCampus}
                                       </span>
                                       {sess.classroom && (
-                                        <span className="text-slate-500 dark:text-slate-400 font-mono">
-                                          • Aula {sess.classroom}
-                                        </span>
+                                        <span className="font-mono">• {formatClassroom(sess.classroom)}</span>
                                       )}
                                     </div>
-                                    {sess.teacher && sess.teacher !== section.teachers[0] && (
-                                      <span className="text-[9.5px] italic text-slate-600 dark:text-slate-400 truncate max-w-[140px]" title={sess.teacher}>
-                                        {sess.teacher}
-                                      </span>
-                                    )}
                                   </div>
-                                </div>
-                              ))}
-                            </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
-                      })
+                      })}
+                      </>
                     )}
                   </div>
                 )}
@@ -686,6 +812,7 @@ export const CourseSidebar: React.FC<CourseSidebarProps> = ({
         {onClearCatalog && courses.length > 0 && (
           <button
             onClick={() => {
+              if (!window.confirm('¿Vaciar todo el catálogo de cursos? Podrás deshacerlo.')) return;
               onClearCatalog();
               showToast('Catálogo vaciado');
             }}

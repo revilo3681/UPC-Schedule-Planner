@@ -48,15 +48,49 @@
 }
 
 @media print {
+  @page {
+    size: landscape;
+    margin: 8mm;
+  }
+
+  html,
   body {
     background: white !important;
     color: black !important;
   }
-  .no-print {
+
+  .no-print,
+  #app-header,
+  #tutorial-tip-banner,
+  #mobile-bottom-nav,
+  #course-sidebar-container,
+  #courses-palette,
+  #conflicts-alert-banner,
+  #inter-campus-alert-banner,
+  #export-modal,
+  #import-schedule-modal,
+  #auto-generator-modal,
+  #profile-modal {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
+  }
+
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  #schedule-grid-container {
+    display: block !important;
+  }
+
+  #timetable-box {
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    break-inside: avoid;
   }
 }
 

@@ -99,8 +99,8 @@ export const COURSE_COLOR_PALETTE = [
 
 export interface StudentProfile {
   fullName: string;
-  studentCode: string; // e.g. "u20211a765"
-  email: string;       // e.g. "u20211a765@upc.edu.pe"
+  studentCode: string; // e.g. "u202000001"
+  email: string;       // e.g. "u202000001@upc.edu.pe"
   career: string;      // e.g. "Ingeniería de Software"
   campus: string;      // e.g. "San Isidro" | "Monterrico" | "San Miguel" | "Villa"
   currentCycle: number; // 1 - 10

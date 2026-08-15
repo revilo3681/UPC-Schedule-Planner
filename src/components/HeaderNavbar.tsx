@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Calendar,
   Sparkles,
@@ -7,8 +7,6 @@ import {
   RotateCcw,
   AlertTriangle,
   Clock,
-  Award,
-  Layers,
   FileSpreadsheet,
   Grid,
   List,
@@ -17,9 +15,7 @@ import {
   Sun,
   Moon,
   MapPin,
-  User,
   Edit3,
-  GraduationCap,
 } from 'lucide-react';
 import { ScheduleStats, StudentProfile } from '../types/schedule';
 import { LimaDistrict, LIMA_DISTRICTS } from '../utils/distance';
@@ -63,8 +59,6 @@ export const HeaderNavbar: React.FC<HeaderNavbarProps> = ({
   profile,
   onOpenProfile,
 }) => {
-  const [cycleDropdownOpen, setCycleDropdownOpen] = useState(false);
-
   // Extract initials
   const initials = profile.fullName
     ? profile.fullName
@@ -78,7 +72,7 @@ export const HeaderNavbar: React.FC<HeaderNavbarProps> = ({
   return (
     <header
       id="app-header"
-      className={`border-b transition-colors ${
+      className={`no-print border-b transition-colors ${
         darkMode
           ? 'bg-slate-900/95 backdrop-blur-md border-slate-800 text-slate-100 shadow-md'
           : 'bg-white border-slate-200 text-slate-800 shadow-xs'
@@ -112,8 +106,8 @@ export const HeaderNavbar: React.FC<HeaderNavbarProps> = ({
           <div className="relative flex items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-0.5 text-xs font-medium shadow-2xs">
             <button
               id="prev-cycle-btn"
-              onClick={() => onCycleChange(Math.max(1, currentCycle - 1))}
-              disabled={currentCycle <= 1}
+              onClick={() => onCycleChange(Math.max(0, currentCycle - 1))}
+              disabled={currentCycle <= 0}
               className="px-2 py-1 rounded hover:bg-white dark:hover:bg-slate-700 disabled:opacity-30 flex items-center transition text-slate-600 dark:text-slate-300"
               title="Ciclo anterior"
             >
@@ -128,6 +122,9 @@ export const HeaderNavbar: React.FC<HeaderNavbarProps> = ({
               className="px-2 py-1 font-bold text-[#e31e24] dark:text-red-400 bg-transparent border-0 focus:ring-0 focus:outline-none cursor-pointer hover:underline text-xs"
               title="Seleccionar ciclo académico"
             >
+              <option value={0} className="dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold">
+                Todos
+              </option>
               {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((cyc) => (
                 <option key={cyc} value={cyc} className="dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold">
                   {cyc}° Ciclo
@@ -264,7 +261,7 @@ export const HeaderNavbar: React.FC<HeaderNavbarProps> = ({
                 <Edit3 className="w-2.5 h-2.5 text-slate-400 opacity-0 group-hover:opacity-100 transition" />
               </div>
               <p className="text-[10px] text-slate-400 font-mono truncate max-w-[150px]">
-                {profile.email || profile.studentCode || 'u20211a765@upc.edu.pe'}
+                {profile.email || profile.studentCode || 'estudiante@upc.edu.pe'}
               </p>
             </div>
             <div className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-br from-red-600 to-indigo-700 p-0.5 shadow-xs shrink-0 ring-2 ring-red-500/20">

@@ -27,7 +27,27 @@ import {
   Navigation,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { evaluateCommute, LimaDistrict, detectInterCampusConflicts } from '../utils/distance';
+import {
+  evaluateCommute,
+  LimaDistrict,
+  detectInterCampusConflicts,
+  getClosestCampuses,
+  normalizeCampusName,
+  sessionMatchesModalityFilter,
+  sectionHasVacancies,
+  isOnlineSession,
+  UPCCampus,
+} from '../utils/distance';
+
+const ALL_GENERATOR_CAMPUSES: UPCCampus[] = [
+  'Monterrico',
+  'San Isidro',
+  'San Miguel',
+  'Villa',
+];
+
+const ALL_GENERATOR_MODALITIES = ['Presencial', 'Semipresencial', 'Online'] as const;
+type GeneratorModality = (typeof ALL_GENERATOR_MODALITIES)[number];
 
 interface AutoGeneratorModalProps {
   isOpen: boolean;
@@ -37,6 +57,7 @@ interface AutoGeneratorModalProps {
   onApplyCombination: (combination: ScheduleCombination) => void;
   darkMode: boolean;
   userDistrict?: LimaDistrict;
+  preferredCampus?: string;
 }
 
 export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
@@ -47,6 +68,7 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
   onApplyCombination,
   darkMode,
   userDistrict = 'Santiago de Surco',
+  preferredCampus,
 }) => {
   // Courses to include in generator (default: courses that have sections)
   const [targetCourseIds, setTargetCourseIds] = useState<string[]>(() => {
@@ -61,16 +83,56 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
   const [filterNoConflicts, setFilterNoConflicts] = useState(true);
   const [filterNoInterCampusConflicts, setFilterNoInterCampusConflicts] = useState(true);
   const [filterPreferCloseCampus, setFilterPreferCloseCampus] = useState(false);
+  const [allowedCampuses, setAllowedCampuses] = useState<UPCCampus[]>(ALL_GENERATOR_CAMPUSES);
+  const [allowedModalities, setAllowedModalities] = useState<GeneratorModality[]>([
+    ...ALL_GENERATOR_MODALITIES,
+  ]);
   const [filterFreeFriday, setFilterFreeFriday] = useState(false);
   const [filterFreeSaturday, setFilterFreeSaturday] = useState(false);
   const [filterMaxEmptyHours, setFilterMaxEmptyHours] = useState<number | null>(null);
-  const [selectedCombinationId, setSelectedCombinationId] = useState<string | null>(null);
+  const [filterOnlyVacancies, setFilterOnlyVacancies] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(10);
+
+  const closestCampuses = useMemo(
+    () => getClosestCampuses(userDistrict, 2),
+    [userDistrict]
+  );
+
+  const effectiveCampuses = useMemo<UPCCampus[]>(() => {
+    if (filterPreferCloseCampus) {
+      return closestCampuses;
+    }
+    return allowedCampuses.length === 0 ? ALL_GENERATOR_CAMPUSES : allowedCampuses;
+  }, [filterPreferCloseCampus, closestCampuses, allowedCampuses]);
+
+  const effectiveModalities = useMemo<GeneratorModality[]>(() => {
+    return allowedModalities.length === 0 ? [...ALL_GENERATOR_MODALITIES] : allowedModalities;
+  }, [allowedModalities]);
+
+  const coursesForGenerator = useMemo(() => {
+    return courses.map((course) => ({
+      ...course,
+      sections: course.sections.filter((section) => {
+        if (filterOnlyVacancies && !sectionHasVacancies(section.vacancies)) return false;
+        const campusOk = section.sessions.every((sess) => {
+          if (isOnlineSession(sess.modality, sess.campus)) return true;
+          return effectiveCampuses.includes(normalizeCampusName(sess.campus));
+        });
+        const modalityOk = section.sessions.every((sess) =>
+          effectiveModalities.some((mod) =>
+            sessionMatchesModalityFilter(sess.modality, sess.campus, mod)
+          )
+        );
+        return campusOk && modalityOk;
+      }),
+    }));
+  }, [courses, effectiveCampuses, effectiveModalities, filterOnlyVacancies]);
 
   // Generate combinations
   const allCombinations = useMemo(() => {
     if (targetCourseIds.length === 0) return [];
-    return generateAllCombinations(courses, targetCourseIds);
-  }, [courses, targetCourseIds]);
+    return generateAllCombinations(coursesForGenerator, targetCourseIds);
+  }, [coursesForGenerator, targetCourseIds]);
 
   // Apply UI Filters
   const filteredCombinations = useMemo(() => {
@@ -79,20 +141,9 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
 
       // Inter-campus commute check
       if (filterNoInterCampusConflicts) {
-        const combSessions = getActiveSessions(courses, comb.selectedSections);
+        const combSessions = getActiveSessions(coursesForGenerator, comb.selectedSections);
         const interConflicts = detectInterCampusConflicts(combSessions);
         if (interConflicts.length > 0) return false;
-      }
-
-      // Proximity check
-      if (filterPreferCloseCampus) {
-        const combSessions = getActiveSessions(courses, comb.selectedSections);
-        const hasFarCampus = combSessions.some((item) => {
-          if (!item.session.campus || item.session.campus === 'Online') return false;
-          const ev = evaluateCommute(userDistrict, item.session.campus);
-          return ev.level === 'far';
-        });
-        if (hasFarCampus) return false;
       }
 
       if (filterFreeFriday && !comb.tags.includes('Viernes libre')) return false;
@@ -104,13 +155,41 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
     allCombinations,
     filterNoConflicts,
     filterNoInterCampusConflicts,
-    filterPreferCloseCampus,
     filterFreeFriday,
     filterFreeSaturday,
     filterMaxEmptyHours,
-    courses,
-    userDistrict,
+    coursesForGenerator,
   ]);
+
+  const toggleModality = (modality: GeneratorModality) => {
+    setAllowedModalities((prev) => {
+      const next = prev.includes(modality)
+        ? prev.filter((m) => m !== modality)
+        : [...prev, modality];
+      return next;
+    });
+  };
+
+  const toggleCampus = (campus: UPCCampus) => {
+    setFilterPreferCloseCampus(false);
+    setAllowedCampuses((prev) => {
+      const next = prev.includes(campus)
+        ? prev.filter((c) => c !== campus)
+        : [...prev, campus];
+      return next;
+    });
+  };
+
+  const applyClosestCampuses = () => {
+    setFilterPreferCloseCampus((prev) => {
+      if (prev) {
+        setAllowedCampuses(ALL_GENERATOR_CAMPUSES);
+        return false;
+      }
+      setAllowedCampuses(closestCampuses);
+      return true;
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -179,8 +258,13 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
             <span className="font-extrabold text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">
               1. Cursos a incluir en la optimización ({targetCourseIds.length} seleccionados):
             </span>
+            {coursesForGenerator.some((c) => targetCourseIds.includes(c.id) && c.sections.length === 0) && (
+              <p className="mb-2 text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg px-2.5 py-1.5">
+                Alguno de los cursos no tiene secciones con las sedes o modalidades marcadas. Amplía esos filtros o quita ese curso.
+              </p>
+            )}
             <div className="flex items-center gap-2 flex-wrap">
-              {courses.map((c) => {
+              {coursesForGenerator.map((c) => {
                 const isChecked = targetCourseIds.includes(c.id);
                 return (
                   <button
@@ -237,16 +321,16 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
               </button>
 
               <button
-                onClick={() => setFilterPreferCloseCampus(!filterPreferCloseCampus)}
+                onClick={applyClosestCampuses}
                 className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 ${
                   filterPreferCloseCampus
                     ? 'bg-purple-600 border-purple-600 text-white shadow-xs'
                     : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'
                 }`}
-                title={`Excluye sedes lejanas respecto a ${userDistrict}`}
+                title={`Usa las sedes UPC más cercanas a ${userDistrict}, aunque no haya campus en tu distrito`}
               >
                 <MapPin className="w-3.5 h-3.5" />
-                <span>Sedes cercanas a {userDistrict}</span>
+                <span>Sedes más cercanas a {userDistrict}</span>
               </button>
 
               <button
@@ -274,6 +358,18 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
               </button>
 
               <button
+                onClick={() => setFilterOnlyVacancies(!filterOnlyVacancies)}
+                className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 ${
+                  filterOnlyVacancies
+                    ? 'bg-teal-600 border-teal-600 text-white shadow-xs'
+                    : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Solo con vacantes</span>
+              </button>
+
+              <button
                 onClick={() =>
                   setFilterMaxEmptyHours(filterMaxEmptyHours === 4 ? null : 4)
                 }
@@ -286,6 +382,95 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                 <Clock className="w-3.5 h-3.5" />
                 <span>Mínimos Huecos (≤ 4h)</span>
               </button>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+              <span className="font-extrabold text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">
+                Modalidad que quieres usar:
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {ALL_GENERATOR_MODALITIES.map((modality) => {
+                  const isOn = effectiveModalities.includes(modality);
+                  const style =
+                    modality === 'Online'
+                      ? isOn
+                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs'
+                        : 'border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400'
+                      : modality === 'Semipresencial'
+                        ? isOn
+                          ? 'bg-amber-500 border-amber-500 text-slate-950 shadow-xs'
+                          : 'border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400'
+                        : isOn
+                          ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                          : 'border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400';
+                  return (
+                    <button
+                      key={modality}
+                      onClick={() => toggleModality(modality)}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition ${style}`}
+                    >
+                      {modality === 'Online' ? 'Online / Virtual' : modality}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                Online / Virtual no es una sede: actívalo aquí para incluir clases a distancia.
+              </p>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+              <span className="font-extrabold text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">
+                Sedes presenciales que quieres usar:
+              </span>
+              {preferredCampus && ALL_GENERATOR_CAMPUSES.includes(normalizeCampusName(preferredCampus) as UPCCampus) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const campus = normalizeCampusName(preferredCampus) as UPCCampus;
+                    setFilterPreferCloseCampus(false);
+                    setAllowedCampuses([campus]);
+                  }}
+                  className="mb-2 px-3 py-1.5 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 text-[#e31e24] dark:text-red-300 text-xs font-bold"
+                >
+                  Usar mi sede del perfil: {normalizeCampusName(preferredCampus)}
+                </button>
+              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                {ALL_GENERATOR_CAMPUSES.map((campus) => {
+                  const isOn = effectiveCampuses.includes(campus);
+                  const commute = evaluateCommute(userDistrict, campus);
+                  const isPreferred = normalizeCampusName(preferredCampus) === campus;
+                  return (
+                    <button
+                      key={campus}
+                      onClick={() => toggleCampus(campus)}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition ${
+                        isOn
+                          ? 'bg-slate-900 border-slate-900 text-white dark:bg-slate-100 dark:border-slate-100 dark:text-slate-900 shadow-xs'
+                          : 'border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400'
+                      } ${isPreferred ? 'ring-2 ring-[#e31e24]/50' : ''}`}
+                    >
+                      {campus}{isPreferred ? ' ★' : ''}
+                      {commute && (
+                        <span className="ml-1 font-medium opacity-80">~{commute.minutes}m</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {filterPreferCloseCampus && (
+                <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                  Sedes más cercanas desde {userDistrict}:{' '}
+                  {closestCampuses
+                    .map((campus) => {
+                      const ev = evaluateCommute(userDistrict, campus);
+                      return `${campus} (~${ev.minutes} min)`;
+                    })
+                    .join(' y ')}
+                  . Las virtuales se controlan en Modalidad. Marca otras sedes si también las quieres.
+                </p>
+              )}
             </div>
           </div>
 
@@ -305,12 +490,12 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                 <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
                 <p className="font-bold text-sm">No hay combinaciones con los filtros seleccionados.</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Intenta desmarcar algunos filtros (ej. Viernes libre) o cambiar los cursos objetivo.
+                  Prueba marcar más sedes o modalidades, desactivar Viernes/Sábado libre o quitar algún curso.
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                {filteredCombinations.slice(0, 10).map((comb, index) => {
+                {filteredCombinations.slice(0, visibleCount).map((comb, index) => {
                   const isTopRanked = index === 0 && comb.stats.conflictsCount === 0;
 
                   return (
@@ -381,7 +566,7 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                         {/* Selected Sections in this combination */}
                         <div className="mt-3 space-y-1 text-xs">
                           {Object.entries(comb.selectedSections).map(([cId, secId]) => {
-                            const course = courses.find((c) => c.id === cId);
+                            const course = coursesForGenerator.find((c) => c.id === cId);
                             const sec = course?.sections.find((s) => s.id === secId);
                             if (!course || !sec) return null;
 
@@ -418,6 +603,15 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                   );
                 })}
               </div>
+            )}
+            {filteredCombinations.length > visibleCount && (
+              <button
+                type="button"
+                onClick={() => setVisibleCount((n) => n + 10)}
+                className="mt-3 w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Ver siguientes 10 ({visibleCount} de {filteredCombinations.length})
+              </button>
             )}
           </div>
         </div>

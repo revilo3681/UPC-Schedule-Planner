@@ -195,12 +195,7 @@ export interface CommuteEvaluation {
 }
 
 export function evaluateCommute(district?: string, campusName?: string): CommuteEvaluation {
-  let normalizedCampus: UPCCampus = 'Monterrico';
-  if (!campusName) normalizedCampus = 'Monterrico';
-  else if (/san isidro|salaverry|si/i.test(campusName)) normalizedCampus = 'San Isidro';
-  else if (/villa|chorrillos|vi/i.test(campusName)) normalizedCampus = 'Villa';
-  else if (/san miguel|marina|sm/i.test(campusName)) normalizedCampus = 'San Miguel';
-  else if (/online|virtual|distancia/i.test(campusName)) normalizedCampus = 'Online';
+  const normalizedCampus = normalizeCampusName(campusName);
 
   if (normalizedCampus === 'Online') {
     return {
@@ -336,9 +331,71 @@ export function detectInterCampusConflicts(activeSessions: ActiveSessionEntry[])
 
 export function normalizeCampusName(name?: string): UPCCampus {
   if (!name) return 'Monterrico';
-  if (/san isidro|salaverry|si/i.test(name)) return 'San Isidro';
-  if (/villa|chorrillos|vi/i.test(name)) return 'Villa';
-  if (/san miguel|marina|sm/i.test(name)) return 'San Miguel';
-  if (/online|virtual|distancia/i.test(name)) return 'Online';
+  const n = name.trim().toUpperCase().replace(/[_-]+/g, ' ');
+  // Online first: "VIRTUAL" must not match Villa via a loose "VI" regex
+  if (
+    n.includes('ONLINE') ||
+    n.includes('VIRTUAL') ||
+    n.includes('DISTANCIA') ||
+    n.includes('REMOTO') ||
+    n === 'VIRT'
+  ) {
+    return 'Online';
+  }
+  if (n.includes('SAN ISIDRO') || n.includes('SALAVERRY') || n === 'SI') return 'San Isidro';
+  if (n.includes('SAN MIGUEL') || n.includes('LA MARINA') || n === 'SM') return 'San Miguel';
+  if (n.includes('VILLA') || n.includes('CHORRILLOS') || n === 'VI') return 'Villa';
+  if (n.includes('MONTERRICO') || n.includes('SURCO') || n.includes('PRIMAVERA') || n === 'MO') {
+    return 'Monterrico';
+  }
   return 'Monterrico';
+}
+
+const PHYSICAL_CAMPUSES: UPCCampus[] = ['Monterrico', 'San Isidro', 'San Miguel', 'Villa'];
+
+/** Closest real UPC campuses to a district (never empty). Online is excluded. */
+export function getClosestCampuses(district?: string, count = 2): UPCCampus[] {
+  const validDistrict =
+    district && (district as LimaDistrict) in DISTRICT_COMMUTE_MATRIX
+      ? (district as LimaDistrict)
+      : 'Santiago de Surco';
+  const matrix = DISTRICT_COMMUTE_MATRIX[validDistrict] || DISTRICT_COMMUTE_MATRIX['Santiago de Surco'];
+  return [...PHYSICAL_CAMPUSES]
+    .sort((a, b) => (matrix[a] ?? 99) - (matrix[b] ?? 99))
+    .slice(0, Math.max(1, count));
+}
+
+export function isOnlineSession(modality?: string, campus?: string): boolean {
+  const normalizedCampus = normalizeCampusName(campus);
+  return (
+    normalizedCampus === 'Online' ||
+    modality === 'A distancia' ||
+    modality === 'Virtual'
+  );
+}
+
+export function sessionMatchesCampusFilter(
+  campus: string | undefined,
+  filter: string,
+  modality?: string
+): boolean {
+  if (filter === 'all') return true;
+  if (isOnlineSession(modality, campus)) return true;
+  return normalizeCampusName(campus) === filter;
+}
+
+export function sessionMatchesModalityFilter(modality: string | undefined, campus: string | undefined, filter: string): boolean {
+  if (filter === 'all') return true;
+  const isOnline = isOnlineSession(modality, campus);
+  if (filter === 'Online' || filter === 'A distancia' || filter === 'Virtual') return isOnline;
+  if (filter === 'Presencial') return !isOnline && modality !== 'Semipresencial';
+  if (filter === 'Semipresencial') return modality === 'Semipresencial';
+  return modality === filter;
+}
+
+export function sectionHasVacancies(vacancies?: string): boolean {
+  if (!vacancies) return true;
+  const match = vacancies.match(/(\d+)\s*(?:\/|de)\s*(\d+)/i);
+  if (!match) return true;
+  return parseInt(match[1], 10) > 0;
 }

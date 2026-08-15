@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Course, CourseSection, ScheduleCombination, SelectedCourseMap, StudentProfile } from './types/schedule';
+import { Course, ScheduleCombination, SelectedCourseMap, StudentProfile } from './types/schedule';
 import { UPC_SAMPLE_COURSES } from './data/upcSampleData';
 import { calculateScheduleStats, detectConflicts, getActiveSessions } from './utils/scheduler';
 import { HeaderNavbar } from './components/HeaderNavbar';
@@ -17,26 +17,35 @@ import { TableView } from './components/TableView';
 import { ExportModal } from './components/ExportModal';
 import { ProfileModal } from './components/ProfileModal';
 import { LimaDistrict, detectInterCampusConflicts } from './utils/distance';
+import { decodePlanHash } from './utils/export';
 import {
-  Calendar,
   Grid,
   List,
   Sparkles,
   UploadCloud,
   Download,
-  Info,
-  CheckCircle2,
-  HelpCircle,
   X,
   FileSpreadsheet,
+  Plus,
 } from 'lucide-react';
 
-const STORAGE_KEY_COURSES = 'sumplus_upc_courses_v1';
-const STORAGE_KEY_SELECTED = 'sumplus_upc_selected_v1';
-const STORAGE_KEY_CYCLE = 'sumplus_upc_cycle_v1';
+const STORAGE_KEY_COURSES = 'sumplus_upc_courses_v4';
+const STORAGE_KEY_SELECTED = 'sumplus_upc_selected_v4';
+const STORAGE_KEY_CYCLE = 'sumplus_upc_cycle_v4';
 const STORAGE_KEY_DARK = 'sumplus_upc_dark_v1';
 const STORAGE_KEY_DISTRICT = 'sumplus_upc_district_v1';
-const STORAGE_KEY_PROFILE = 'sumplus_upc_profile_v2';
+const STORAGE_KEY_PROFILE = 'sumplus_upc_profile_v4';
+const STORAGE_KEY_TUTORIAL = 'sumplus_upc_hide_tutorial_v1';
+
+const DEFAULT_PROFILE: StudentProfile = {
+  fullName: 'Alex Rivera Campos',
+  studentCode: 'u202000001',
+  email: 'u202000001@upc.edu.pe',
+  career: 'Ingeniería de Sistemas de Información',
+  campus: 'Monterrico',
+  currentCycle: 1,
+  userDistrict: 'Santiago de Surco',
+};
 
 // Helper to sanitize courses safely
 function sanitizeCourses(rawCourses: any[]): Course[] {
@@ -86,7 +95,7 @@ export default function App() {
   // Cycle state
   const [currentCycle, setCurrentCycle] = useState<number>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_CYCLE);
-    return saved ? parseInt(saved, 10) : 8;
+    return saved ? parseInt(saved, 10) : 1;
   });
 
   // User District state for commute calculation
@@ -104,15 +113,7 @@ export default function App() {
         if (parsed && typeof parsed === 'object') return parsed;
       } catch {}
     }
-    return {
-      fullName: 'Sebastian Rosales',
-      studentCode: 'u20211a765',
-      email: 'u20211a765@upc.edu.pe',
-      career: 'Ingeniería de Telecomunicaciones y Redes',
-      campus: 'San Isidro',
-      currentCycle: 8,
-      userDistrict: 'Santiago de Surco',
-    };
+    return DEFAULT_PROFILE;
   });
 
   // Active View ('grid' | 'list' | 'table' | 'auto')
@@ -145,16 +146,7 @@ export default function App() {
         // fallback
       }
     }
-    // Default: select the screenshot 1 configuration (C8 courses with intentional clash for demonstration)
-    return {
-      'c8-dir-proy': 'dp-g1',
-      'c8-radio-soft': 'rds-g1',
-      'c8-fund-opticas': 'fco-g2',
-      'c8-redes-banda-ancha': 'rba-g2',
-      'c8-tec-ctrl-int': 'tci-g1', // clashes with radio-soft on Monday 18:00
-      'c8-com-rurales': 'pcr-g1',
-      'c8-gest-redes': 'grt-g1',
-    };
+    return {};
   });
 
   // Modals state
@@ -162,7 +154,14 @@ export default function App() {
   const [isAutoGeneratorOpen, setIsAutoGeneratorOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [showTutorialBanner, setShowTutorialBanner] = useState(true);
+  const [showTutorialBanner, setShowTutorialBanner] = useState(() => {
+    return localStorage.getItem(STORAGE_KEY_TUTORIAL) !== '1';
+  });
+  const [catalogUndo, setCatalogUndo] = useState<{
+    courses: Course[];
+    selectedSections: SelectedCourseMap;
+    label: string;
+  } | null>(null);
 
   // Sync to local storage
   useEffect(() => {
@@ -193,6 +192,56 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    if (!catalogUndo) return;
+    const timer = window.setTimeout(() => setCatalogUndo(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [catalogUndo]);
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#plan=')) return;
+    try {
+      const parsed = decodePlanHash(hash.slice(6)) as {
+        c?: Course[];
+        courses?: Course[];
+        s?: SelectedCourseMap;
+        selectedSections?: SelectedCourseMap;
+      };
+      const importedCourses = parsed.c || parsed.courses;
+      const importedSelected = parsed.selectedSections || parsed.s;
+      if (Array.isArray(importedCourses) && importedCourses.length > 0) {
+        setCourses(sanitizeCourses(importedCourses));
+      }
+      if (importedSelected && typeof importedSelected === 'object') {
+        setSelectedSections(importedSelected);
+      }
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch {
+      // enlace inválido
+    }
+  }, []);
+
+  const snapshotCatalog = (label: string) => {
+    setCatalogUndo({
+      courses,
+      selectedSections,
+      label,
+    });
+  };
+
+  const handleUndoCatalog = () => {
+    if (!catalogUndo) return;
+    setCourses(catalogUndo.courses);
+    setSelectedSections(catalogUndo.selectedSections);
+    setCatalogUndo(null);
+  };
+
+  const hideTutorial = () => {
+    setShowTutorialBanner(false);
+    localStorage.setItem(STORAGE_KEY_TUTORIAL, '1');
+  };
 
   // Compute stats and conflicts
   const stats = useMemo(() => {
@@ -233,6 +282,8 @@ export default function App() {
 
   // Handler: Delete course completely from catalog and selection
   const handleDeleteCourseFromCatalog = (courseId: string) => {
+    const course = courses.find((c) => c.id === courseId);
+    snapshotCatalog(course ? `Se eliminó "${course.name}"` : 'Curso eliminado');
     setCourses((prev) => prev.filter((c) => c.id !== courseId));
     setSelectedSections((prev) => {
       const copy = { ...prev };
@@ -243,6 +294,7 @@ export default function App() {
 
   // Handler: Delete a specific section from a course
   const handleDeleteSectionFromCourse = (courseId: string, sectionId: string) => {
+    snapshotCatalog('Sección eliminada');
     setCourses((prev) =>
       prev.map((c) => {
         if (c.id !== courseId) return c;
@@ -265,19 +317,13 @@ export default function App() {
   // Handler: Restore default sample UPC courses
   const handleRestoreDefaultCourses = () => {
     setCourses(UPC_SAMPLE_COURSES);
-    setSelectedSections({
-      'c8-dir-proy': 'dp-g1',
-      'c8-radio-soft': 'rds-g1',
-      'c8-fund-opticas': 'fco-g2',
-      'c8-redes-banda-ancha': 'rba-g2',
-      'c8-tec-ctrl-int': 'tci-g1',
-      'c8-com-rurales': 'pcr-g1',
-      'c8-gest-redes': 'grt-g1',
-    });
+    setSelectedSections({});
+    setCurrentCycle(1);
   };
 
   // Handler: Clear entire catalog
   const handleClearCatalog = () => {
+    snapshotCatalog('Catálogo vaciado');
     setCourses([]);
     setSelectedSections({});
   };
@@ -308,18 +354,12 @@ export default function App() {
   // Handler: Import new courses
   const handleImportCourses = (
     importedCourses: Course[],
-    replaceExisting: boolean
+    replaceExisting: boolean,
+    importedSelected?: SelectedCourseMap
   ) => {
     if (replaceExisting) {
       setCourses(importedCourses);
-      // Automatically select first section of each course
-      const newSelected: SelectedCourseMap = {};
-      importedCourses.forEach((c) => {
-        if (c.sections.length > 0) {
-          newSelected[c.id] = c.sections[0].id;
-        }
-      });
-      setSelectedSections(newSelected);
+      setSelectedSections(importedSelected && Object.keys(importedSelected).length > 0 ? importedSelected : {});
     } else {
       setCourses((prev) => {
         const existingNames = new Set(prev.map((c) => c.name.toLowerCase()));
@@ -328,16 +368,9 @@ export default function App() {
         );
         return [...prev, ...uniqueNew];
       });
-      // Select imported ones
-      setSelectedSections((prev) => {
-        const copy = { ...prev };
-        importedCourses.forEach((c) => {
-          if (c.sections.length > 0 && !copy[c.id]) {
-            copy[c.id] = c.sections[0].id;
-          }
-        });
-        return copy;
-      });
+      if (importedSelected && Object.keys(importedSelected).length > 0) {
+        setSelectedSections((prev) => ({ ...prev, ...importedSelected }));
+      }
     }
   };
 
@@ -391,7 +424,7 @@ export default function App() {
         {showTutorialBanner && (
           <div
             id="tutorial-tip-banner"
-            className={`p-3.5 sm:p-4 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs transition ${
+            className={`no-print p-3.5 sm:p-4 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs transition ${
               darkMode
                 ? 'bg-slate-900 border-slate-800 text-slate-200'
                 : 'bg-white border-slate-200 text-slate-800'
@@ -407,7 +440,7 @@ export default function App() {
                     ¡Bienvenido {profile.fullName.split(' ')[0]} al planificador de horarios UPC!
                   </span>
                   <span className="px-2 py-0.5 rounded bg-red-50 dark:bg-red-950/60 text-[#e31e24] dark:text-red-400 font-bold text-[10px] border border-red-200 dark:border-red-900">
-                    Ciclo {currentCycle} • 2026-2
+                    Ciclo {currentCycle > 0 ? currentCycle : 'Todos'} • 2026-2
                   </span>
                 </div>
                 <p className="text-slate-600 dark:text-slate-300 text-[11.5px] leading-relaxed">
@@ -428,7 +461,7 @@ export default function App() {
                 <span>Importar / Prompt GPT</span>
               </button>
               <button
-                onClick={() => setShowTutorialBanner(false)}
+                onClick={hideTutorial}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                 title="Ocultar aviso"
               >
@@ -480,6 +513,8 @@ export default function App() {
               onCycleChange={setCurrentCycle}
               darkMode={darkMode}
               userDistrict={userDistrict}
+              onUndoLastChange={handleUndoCatalog}
+              canUndo={!!catalogUndo}
             />
           </div>
         )}
@@ -501,6 +536,8 @@ export default function App() {
               onCycleChange={setCurrentCycle}
               darkMode={darkMode}
               userDistrict={userDistrict}
+              onUndoLastChange={handleUndoCatalog}
+              canUndo={!!catalogUndo}
             />
           </div>
         )}
@@ -519,7 +556,7 @@ export default function App() {
       {/* Mobile Bottom Navigation Bar for phones & tablets */}
       <div
         id="mobile-bottom-nav"
-        className={`lg:hidden sticky bottom-0 z-40 border-t px-3 py-2 flex items-center justify-around gap-1 ${
+        className={`no-print lg:hidden sticky bottom-0 z-40 border-t px-2 py-2 flex items-center justify-around gap-0.5 ${
           darkMode
             ? 'bg-slate-900/95 border-slate-800 text-slate-300'
             : 'bg-white/95 border-slate-200 text-slate-700'
@@ -570,8 +607,24 @@ export default function App() {
         </button>
 
         <button
+          onClick={() => setIsImportOpen(true)}
+          className="flex flex-col items-center gap-1 px-2 py-1 rounded-xl text-[10px] font-bold text-slate-500"
+        >
+          <Plus className="w-4 h-4" />
+          <span>Importar</span>
+        </button>
+
+        <button
+          onClick={() => setIsExportOpen(true)}
+          className="flex flex-col items-center gap-1 px-2 py-1 rounded-xl text-[10px] font-bold text-slate-500"
+        >
+          <Download className="w-4 h-4" />
+          <span>Exportar</span>
+        </button>
+
+        <button
           onClick={() => setIsProfileOpen(true)}
-          className="flex flex-col items-center gap-1 px-3 py-1 rounded-xl text-[10px] font-bold text-red-600 dark:text-red-400"
+          className="flex flex-col items-center gap-1 px-2 py-1 rounded-xl text-[10px] font-bold text-red-600 dark:text-red-400"
         >
           <div className="w-4 h-4 rounded-full bg-[#e31e24] text-white flex items-center justify-center text-[8px] font-bold">
             {profile.fullName ? profile.fullName[0] : 'U'}
@@ -605,6 +658,7 @@ export default function App() {
         onApplyCombination={handleApplyCombination}
         darkMode={darkMode}
         userDistrict={userDistrict}
+        preferredCampus={profile.campus}
       />
 
       <ExportModal

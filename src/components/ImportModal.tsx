@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Course } from '../types/schedule';
-import { parseSmartSchedule } from '../utils/parser';
+import { Course, SelectedCourseMap } from '../types/schedule';
+import { parseScheduleImport } from '../utils/parser';
 import { UPC_SAMPLE_COURSES } from '../data/upcSampleData';
 import { evaluateCommute, LimaDistrict } from '../utils/distance';
 import {
@@ -22,7 +22,11 @@ import {
 interface ImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImportCourses: (importedCourses: Course[], replaceExisting: boolean) => void;
+  onImportCourses: (
+    importedCourses: Course[],
+    replaceExisting: boolean,
+    selectedSections?: SelectedCourseMap
+  ) => void;
   darkMode: boolean;
   userDistrict?: LimaDistrict;
 }
@@ -37,7 +41,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [activeTab, setActiveTab] = useState<'paste' | 'file' | 'manual' | 'presets'>('paste');
   const [promptMode, setPromptMode] = useState<'withCampus' | 'classic'>('withCampus');
   const [pastedText, setPastedText] = useState('');
-  const [replaceExisting, setReplaceExisting] = useState(false);
+  const [replaceExisting, setReplaceExisting] = useState(true);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
 
   // Manual Form State
@@ -57,42 +61,43 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   if (!isOpen) return null;
 
   // Real-time preview of parsed text
-  const previewParsed = parseSmartSchedule(pastedText);
+  const previewImport = parseScheduleImport(pastedText);
+  const previewParsed = previewImport.courses;
 
   const promptWithCampus = `Actúa como un formateador de horarios universitarios para la UPC.
-A partir de la información de cursos, horarios o captura de pantalla que te adjunte, responde ÚNICAMENTE con los datos en formato CSV (texto plano sin bloques de código ni títulos ni cabecera), utilizando exactamente las siguientes columnas separadas por espacios o tabulaciones:
+A partir de la tabla de Banner ("Encontrar clases"), captura o texto que te adjunte, responde ÚNICAMENTE con texto plano (sin bloques de código ni títulos ni cabecera), una fila por sección NRC, con estas columnas separadas por espacios o tabulaciones:
 
-CICLO CRÉDITOS CURSO TIPO HRS GR DOCENTE SEDE DIA1 INICIO1 FINAL1 DIA2 INICIO2 FINAL2
+CICLO CREDITOS CURSO TIPO MODALIDAD HRS NRC DOCENTE SEDE DIA1 INICIO1 FINAL1 DIA2 INICIO2 FINAL2
 
 Reglas:
-1. Asigna 0 en la columna HRS.
-2. En TIPO usa únicamente 'TEORIA' o 'LABORATORIO'.
-3. En SEDE usa: MONTERRICO, SAN_ISIDRO, SAN_MIGUEL, VILLA, o ONLINE.
-4. Si el curso tiene un solo día de clase, deja DIA2, INICIO2, FINAL2 vacíos o repite el formato.
-5. Formato de horas en 24h (ejemplo: 07:00, 10:00, 18:00).
-6. En DIA usa: LUNES, MARTES, MIERCOLES, JUEVES, VIERNES, SABADO.
+1. En TIPO usa solo TEORIA o LABORATORIO.
+2. En MODALIDAD usa exactamente: PRESENCIAL, SEMIPRESENCIAL o VIRTUAL (columna "Métodos educativos" de Banner).
+3. En SEDE usa: MONTERRICO, SAN_ISIDRO, SAN_MIGUEL, VILLA. Si MODALIDAD es VIRTUAL, SEDE debe ser ONLINE.
+4. Si es SEMIPRESENCIAL, pon la sede de las clases presenciales (ignora el bloque "Ninguno / A distancia" sin hora).
+5. HRS = 0. Horas en 24h (07:00, 18:00). Días: LUNES, MARTES, MIERCOLES, JUEVES, VIERNES, SABADO.
+6. No dupliques el mismo día/hora si Banner lo muestra dos veces (dos rangos de fecha).
+7. NRC es el número de 4 o 5 dígitos. DOCENTE = el marcado (Principal).
 
-Ejemplo de salida que debes generar:
-V 5 PROGRAMACIÓN ORIENTADA A OBJETOS TEORIA 0 15969 TOLEDO ALLER LOURDES SAN_ISIDRO LUNES 07:00 10:00 MIERCOLES 07:00 10:00
-V 4 DISEÑO Y ARQUITECTURA DE BD TEORIA 0 16012 CANAVAL SANCHEZ VICTOR MONTERRICO MARTES 09:00 12:00 JUEVES 09:00 11:00
-VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS ONLINE LUNES 18:00 21:00 MIERCOLES 18:00 20:00`;
+Ejemplo:
+1 5 PROGRAMACIÓN ORIENTADA A OBJETOS TEORIA SEMIPRESENCIAL 0 8016 CACERES HONORES FRANCISCO MONTERRICO LUNES 16:00 18:59
+1 2 SEMINARIO DE INVESTIGACIÓN ACADÉMICA I TEORIA VIRTUAL 0 2145 BARRIONUEVO AGUILAR CARLA ONLINE VIERNES 17:00 18:59
+1 4 ORGANIZACIÓN Y DIRECCIÓN DE EMPRESAS TEORIA PRESENCIAL 0 4158 PEREZ ALGARATE FELIPE MONTERRICO MIERCOLES 09:00 10:59 VIERNES 09:00 10:59`;
 
   const promptClassic = `Actúa como un formateador de horarios universitarios para la UPC.
-A partir de la información de cursos, horarios o captura de pantalla que te adjunte, responde ÚNICAMENTE con los datos en formato CSV (texto plano sin bloques de código ni títulos ni cabecera), utilizando exactamente las siguientes columnas separadas por espacios o tabulaciones:
+A partir de la tabla de Banner, captura o texto que te adjunte, responde ÚNICAMENTE con texto plano (sin bloques de código ni títulos ni cabecera), una fila por sección NRC:
 
-CICLO CRÉDITOS CURSO TIPO HRS GR DOCENTE DIA1 INICIO1 FINAL1 DIA2 INICIO2 FINAL2
+CICLO CREDITOS CURSO TIPO MODALIDAD HRS NRC DOCENTE DIA1 INICIO1 FINAL1 DIA2 INICIO2 FINAL2
 
 Reglas:
-1. Asigna 0 en la columna HRS.
-2. En TIPO usa únicamente 'TEORIA' o 'LABORATORIO'.
-3. Si el curso tiene un solo día de clase, deja DIA2, INICIO2, FINAL2 vacíos o repite el formato.
-4. Formato de horas en 24h (ejemplo: 07:00, 10:00, 18:00).
-5. En DIA usa: LUNES, MARTES, MIERCOLES, JUEVES, VIERNES, SABADO.
+1. TIPO: TEORIA o LABORATORIO.
+2. MODALIDAD: PRESENCIAL, SEMIPRESENCIAL o VIRTUAL (columna "Métodos educativos").
+3. Si es VIRTUAL no inventes aula. Si es SEMIPRESENCIAL usa solo los horarios presenciales (omite "Ninguno / A distancia" sin hora).
+4. HRS = 0. Horas 24h. Días: LUNES, MARTES, MIERCOLES, JUEVES, VIERNES, SABADO.
+5. No dupliques el mismo día/hora si Banner lo muestra dos veces.
 
-Ejemplo de salida que debes generar:
-V 5 PROGRAMACIÓN ORIENTADA A OBJETOS TEORIA 0 15969 TOLEDO ALLER LOURDES LUNES 07:00 10:00 MIERCOLES 07:00 10:00
-V 4 DISEÑO Y ARQUITECTURA DE BD TEORIA 0 16012 CANAVAL SANCHEZ VICTOR MARTES 09:00 12:00 JUEVES 09:00 11:00
-VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS LUNES 18:00 21:00 MIERCOLES 18:00 20:00`;
+Ejemplo:
+1 5 PROGRAMACIÓN ORIENTADA A OBJETOS TEORIA SEMIPRESENCIAL 0 8016 CACERES HONORES FRANCISCO LUNES 16:00 18:59
+1 2 SEMINARIO DE INVESTIGACIÓN ACADÉMICA I TEORIA VIRTUAL 0 2145 BARRIONUEVO AGUILAR CARLA VIERNES 17:00 18:59`;
 
   const activePrompt = promptMode === 'withCampus' ? promptWithCampus : promptClassic;
 
@@ -110,9 +115,9 @@ VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS LUNES 18:00 21:00
     reader.onload = (event) => {
       const content = event.target?.result as string;
       if (content) {
-        const parsed = parseSmartSchedule(content);
-        if (parsed.length > 0) {
-          onImportCourses(parsed, replaceExisting);
+        const parsed = parseScheduleImport(content);
+        if (parsed.courses.length > 0 || parsed.selectedSections) {
+          onImportCourses(parsed.courses, replaceExisting, parsed.selectedSections);
           onClose();
         } else {
           alert('No se pudieron reconocer cursos en el archivo subido.');
@@ -123,11 +128,11 @@ VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS LUNES 18:00 21:00
   };
 
   const handleConfirmPaste = () => {
-    if (previewParsed.length === 0) {
+    if (previewParsed.length === 0 && !previewImport.selectedSections) {
       alert('Por favor pega texto válido de tu horario o banner UPC.');
       return;
     }
-    onImportCourses(previewParsed, replaceExisting);
+    onImportCourses(previewParsed, replaceExisting, previewImport.selectedSections);
     onClose();
   };
 
@@ -192,7 +197,7 @@ VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS LUNES 18:00 21:00
                 Importar Horarios Universitarios
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Soporta formato UPC Banner, tabla copiada de ChatGPT / CSV, o creación manual.
+                Pega directo de Banner (Encontrar clases), o usa ChatGPT / CSV / alta manual.
               </p>
             </div>
           </div>
@@ -217,7 +222,7 @@ VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS LUNES 18:00 21:00
             }`}
           >
             <FileText className="w-4 h-4" />
-            <span>🤖 Pegar de ChatGPT / Banner UPC</span>
+            <span>Pegar Banner o ChatGPT</span>
           </button>
 
           <button
@@ -265,12 +270,19 @@ VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS LUNES 18:00 21:00
           {/* TAB 1: PASTE TEXT / UPC BANNER */}
           {activeTab === 'paste' && (
             <div className="space-y-4">
+              <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-900 dark:text-emerald-200">
+                <p className="font-extrabold mb-1">Puedes pegar directo de Banner — no hace falta ChatGPT</p>
+                <p className="text-[11px] leading-relaxed text-emerald-800 dark:text-emerald-300">
+                  En Intranet UPC → Planificar → Encontrar clases, selecciona todo el resultado (título, NRC, horarios, sede, vacantes y <strong>Métodos educativos</strong>: Presencial / Semipresencial / Virtual) y pégalo abajo. El lector detecta modalidad, sede y omite el bloque “Ninguno / A distancia” sin hora.
+                </p>
+              </div>
+
               {/* ChatGPT Prompt Helper Card */}
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 space-y-3">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
                     <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-                    <span>Paso 1: Selecciona el formato y copia el Prompt para ChatGPT</span>
+                    <span>Opcional: prompt para ChatGPT / Gemini (incluye modalidad)</span>
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
@@ -312,20 +324,19 @@ VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS LUNES 18:00 21:00
                 </div>
 
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  👉 Pega este prompt en ChatGPT o Gemini junto a tu captura o texto de cursos de Banner UPC. Luego copia la respuesta generada y pégala en el recuadro de abajo.
+                  Si Banner no pega bien, copia este prompt, pégalo en ChatGPT o Gemini junto a tu tabla y luego pega la respuesta abajo. Ahora pide PRESENCIAL / SEMIPRESENCIAL / VIRTUAL.
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
-                  Paso 2: Pega aquí la respuesta de ChatGPT o tu tabla de Banner UPC:
+                  Pega aquí la tabla de Banner o la respuesta de ChatGPT
                 </label>
                 <textarea
                   rows={6}
-                  placeholder={`Ejemplo de lo que debes pegar aquí:
-V 5 PROGRAMACIÓN ORIENTADA A OBJETOS TEORIA 0 15969 TOLEDO ALLER LOURDES SAN_ISIDRO LUNES 07:00 10:00 MIERCOLES 07:00 10:00
-V 4 DISEÑO Y ARQUITECTURA DE BD TEORIA 0 16012 CANAVAL SANCHEZ VICTOR MONTERRICO MARTES 09:00 12:00 JUEVES 09:00 11:00
-VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS ONLINE LUNES 18:00 21:00 MIERCOLES 18:00 20:00`}
+                  placeholder={`Pega la tabla de Banner (Encontrar clases) o el CSV del prompt, por ejemplo:
+1 5 PROGRAMACIÓN ORIENTADA A OBJETOS TEORIA SEMIPRESENCIAL 0 8016 CACERES HONORES FRANCISCO MONTERRICO LUNES 16:00 18:59
+1 2 SEMINARIO DE INVESTIGACIÓN ACADÉMICA I TEORIA VIRTUAL 0 2145 BARRIONUEVO AGUILAR CARLA ONLINE VIERNES 17:00 18:59`}
                   value={pastedText}
                   onChange={(e) => setPastedText(e.target.value)}
                   className="w-full p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#e31e24]"
@@ -628,40 +639,43 @@ VIII 3 REDES DE BANDA ANCHA TEORIA 0 14820 RAMIREZ DIAZ CARLOS ONLINE LUNES 18:0
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-3">
                 <div>
                   <h4 className="font-bold text-sm">
-                    Malla UPC Telecomunicaciones & Redes (Ciclo 8)
+                    Ciclo 1 — Ingeniería de Sistemas (2026-2)
                   </h4>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Incluye Radio Definido por Software, Redes de Banda Ancha, Controladores e Interfaces (como en la Imagen 1).
+                    Seminario, Organización de Empresas, Cálculo I, POO y Lenguaje, con Presencial / Semipresencial / Virtual.
                   </p>
                 </div>
                 <button
                   onClick={() => {
-                    onImportCourses(UPC_SAMPLE_COURSES.filter((c) => c.cycle === 8), replaceExisting);
+                    onImportCourses(UPC_SAMPLE_COURSES.filter((c) => c.cycle === 1), replaceExisting);
                     onClose();
                   }}
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shrink-0 shadow-xs transition"
                 >
-                  Cargar Malla C8
+                  Cargar Ciclo 1
                 </button>
               </div>
 
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-3">
                 <div>
                   <h4 className="font-bold text-sm">
-                    Malla UPC Ingeniería de Sistemas (Ciclo 5)
+                    Solo programación (POO + Lenguaje)
                   </h4>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Incluye Programación Orientada a Objetos, Base de Datos, Algoritmos con múltiples NRCs de Banner (como en la Imagen 3).
+                    Programación Orientada a Objetos y Lenguaje de Programación, con secciones Virtual y Semipresencial.
                   </p>
                 </div>
                 <button
                   onClick={() => {
-                    onImportCourses(UPC_SAMPLE_COURSES.filter((c) => c.cycle === 5), replaceExisting);
+                    onImportCourses(
+                      UPC_SAMPLE_COURSES.filter((c) => /PROGRAMACI/i.test(c.name)),
+                      replaceExisting
+                    );
                     onClose();
                   }}
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shrink-0 shadow-xs transition"
                 >
-                  Cargar Malla C5
+                  Cargar programación
                 </button>
               </div>
 

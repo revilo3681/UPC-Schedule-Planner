@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Course, CourseSection, DAY_NAMES, SelectedCourseMap } from '../types/schedule';
 import { doSessionsOverlap } from '../utils/scheduler';
+import { sessionMatchesCampusFilter, sessionMatchesModalityFilter } from '../utils/distance';
 import {
   CheckCircle2,
   Plus,
@@ -31,6 +32,7 @@ export const TableView: React.FC<TableViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [filterCampus, setFilterCampus] = useState('all');
+  const [filterModality, setFilterModality] = useState('all');
 
   // Flatten courses into sections
   const allRows: Array<{
@@ -90,10 +92,17 @@ export const TableView: React.FC<TableViewProps> = ({
     }
 
     if (filterCampus !== 'all') {
-      const hasCampus = section.sessions.some(
-        (s) => s.campus?.toLowerCase() === filterCampus.toLowerCase()
+      const hasCampus = section.sessions.some((s) =>
+        sessionMatchesCampusFilter(s.campus, filterCampus, s.modality)
       );
       if (!hasCampus) return false;
+    }
+
+    if (filterModality !== 'all') {
+      const hasModality = section.sessions.some((s) =>
+        sessionMatchesModalityFilter(s.modality, s.campus, filterModality)
+      );
+      if (!hasModality) return false;
     }
 
     return true;
@@ -138,12 +147,21 @@ export const TableView: React.FC<TableViewProps> = ({
             onChange={(e) => setFilterCampus(e.target.value)}
             className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 font-semibold focus:outline-hidden focus:ring-2 focus:ring-[#e31e24]"
           >
-            <option value="all">Todas las Sedes</option>
+            <option value="all">Todas las sedes</option>
             <option value="San Isidro">San Isidro</option>
             <option value="Monterrico">Monterrico</option>
             <option value="Villa">Villa</option>
             <option value="San Miguel">San Miguel</option>
-            <option value="Online">A distancia</option>
+          </select>
+          <select
+            value={filterModality}
+            onChange={(e) => setFilterModality(e.target.value)}
+            className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 font-semibold focus:outline-hidden focus:ring-2 focus:ring-[#e31e24]"
+          >
+            <option value="all">Todas las modalidades</option>
+            <option value="Presencial">Presencial</option>
+            <option value="Semipresencial">Semipresencial</option>
+            <option value="Online">Online / Virtual</option>
           </select>
         </div>
       </div>

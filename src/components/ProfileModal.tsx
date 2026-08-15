@@ -118,7 +118,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               required
               value={formData.fullName}
               onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-              placeholder="Ej: Víctor Revilo Guerra Gaytán"
+              placeholder="Ej: Alex Rivera Campos"
               className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-[#e31e24] focus:outline-none transition"
             />
           </div>
@@ -135,7 +135,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 required
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                placeholder="u20211a765@upc.edu.pe"
+                placeholder="u202000001@upc.edu.pe"
                 className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-[#e31e24] focus:outline-none transition font-mono"
               />
             </div>
@@ -149,7 +149,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 type="text"
                 value={formData.studentCode}
                 onChange={(e) => setFormData({ ...formData, studentCode: e.target.value })}
-                placeholder="Ej: u20211a765"
+                placeholder="Ej: u202000001"
                 className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-[#e31e24] focus:outline-none transition font-mono uppercase"
               />
             </div>
@@ -207,7 +207,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 onChange={(e) => setFormData({ ...formData, campus: e.target.value })}
                 className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-[#e31e24] focus:outline-none transition"
               >
-                {(Object.keys(UPC_CAMPUSES) as UPCCampus[]).map((camp) => (
+                {(Object.keys(UPC_CAMPUSES) as UPCCampus[])
+                  .filter((camp) => camp !== 'Online')
+                  .map((camp) => (
                   <option key={camp} value={camp}>
                     Campus {camp}
                   </option>

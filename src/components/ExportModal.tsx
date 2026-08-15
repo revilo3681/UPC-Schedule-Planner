@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Course, SelectedCourseMap } from '../types/schedule';
-import { exportScheduleAsICS, exportScheduleAsJSON } from '../utils/export';
+import { encodePlanHash, exportScheduleAsICS, exportScheduleAsJSON } from '../utils/export';
 import {
   Download,
   Calendar,
@@ -41,9 +41,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     // Generate base64 state parameter for url
     try {
       const stateObj = {
+        v: 1,
         s: selectedSections,
+        c: courses,
       };
-      const hash = btoa(JSON.stringify(stateObj));
+      const hash = encodePlanHash(stateObj);
       const url = `${window.location.origin}${window.location.pathname}#plan=${hash}`;
       navigator.clipboard.writeText(url);
       setCopiedLink(true);

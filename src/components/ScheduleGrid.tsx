@@ -186,6 +186,10 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
               <span>Presencial (P)</span>
             </span>
             <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+              <span>Semi</span>
+            </span>
+            <span className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
               <span>Virtual (V)</span>
             </span>
@@ -371,7 +375,11 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                             {item.session.startTime} - {item.session.endTime}
                           </span>
                           <span className="text-[8.5px] uppercase font-extrabold text-[#e31e24] dark:text-red-400">
-                            {item.session.modality === 'A distancia' || item.session.modality === 'Virtual' ? 'Online' : 'Presencial'}
+                            {item.session.modality === 'A distancia' || item.session.modality === 'Virtual'
+                              ? 'Virtual'
+                              : item.session.modality === 'Semipresencial'
+                                ? 'Semi'
+                                : 'Presencial'}
                           </span>
                         </div>
                       </div>
@@ -387,7 +395,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
       {/* Right Column: Cursos Palette & Resumen de Créditos */}
       <div
         id="courses-palette"
-        className={`w-full lg:w-56 shrink-0 rounded-2xl border shadow-xs p-3.5 flex flex-col gap-3 ${
+        className={`no-print w-full lg:w-56 shrink-0 rounded-2xl border shadow-xs p-3.5 flex flex-col gap-3 ${
           darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
         }`}
       >
@@ -424,7 +432,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
             <BookOpen className="w-7 h-7 mx-auto mb-2 opacity-40 text-slate-400" />
             <p>No has seleccionado cursos.</p>
             <p className="mt-1 text-[11px] text-slate-500">
-              Usa el catálogo a la izquierda o haz clic en <strong>Auto ⚡</strong>
+              Usa el catálogo a la derecha o haz clic en <strong>Auto ⚡</strong>
             </p>
           </div>
         ) : (
