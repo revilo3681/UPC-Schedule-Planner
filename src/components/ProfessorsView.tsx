@@ -1,14 +1,21 @@
-import React, { useMemo, useState } from 'react';
-import { Course } from '../types/schedule';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Course, StudentProfile } from '../types/schedule';
 import { FaceRating, Professor } from '../types/professors';
-import { hasBannedLanguage } from '../utils/reviewSafety';
-import { faceEmoji, faceLabel, professorMood } from '../utils/professors';
+import { faceEmoji, professorMood } from '../utils/professors';
+import {
+  groupProfessorsByCareer,
+  groupProfessorsByUserCourses,
+  professorLetter,
+  ProfessorGroup,
+} from '../utils/professorFilters';
 import {
   Heart,
-  Plus,
   Search,
   ExternalLink,
   GraduationCap,
+  BookOpen,
+  Briefcase,
+  LayoutGrid,
 } from 'lucide-react';
 
 const DATA_UPDATED_AT = new Date(2026, 7, 14);
@@ -25,34 +32,171 @@ function formatDataDates() {
   };
 }
 
+type BrowseMode = 'all' | 'my-courses' | 'career';
+
 interface ProfessorsViewProps {
   professors: Professor[];
   courses: Course[];
+  profile: StudentProfile;
   onToggleFavorite: (professorId: string) => void;
-  onAddProfessor: (name: string, courseName: string) => void;
   darkMode: boolean;
+}
+
+function ProfessorCard({
+  professor,
+  darkMode,
+  onToggleFavorite,
+}: {
+  professor: Professor;
+  darkMode: boolean;
+  onToggleFavorite: (professorId: string) => void;
+}) {
+  const mood = professorMood(professor);
+  return (
+    <article
+      className={`rounded-xl border px-3 py-2 flex items-center gap-2 ${
+        professor.favorite
+          ? 'border-rose-300 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/20'
+          : darkMode
+            ? 'border-slate-800 bg-slate-800/40'
+            : 'border-slate-200 bg-slate-50/70'
+      }`}
+    >
+      <span className="text-base leading-none w-6 text-center shrink-0">{mood ? faceEmoji(mood) : '😶'}</span>
+      <div className="min-w-0 flex-1">
+        <h3 className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug truncate">
+          {professor.name}
+        </h3>
+        <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+          {professor.courses[0] || 'Sin curso'}
+          {professor.sourceAverage ? ` · ${professor.sourceAverage}/10` : ''}
+          {professor.sourceCount ? ` · ${professor.sourceCount} calif.` : ''}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => onToggleFavorite(professor.id)}
+        className={`p-1 rounded-lg shrink-0 ${
+          professor.favorite ? 'text-rose-500' : 'text-slate-400 hover:text-rose-500'
+        }`}
+        title={professor.favorite ? 'Quitar de favoritos' : 'Marcar favorito'}
+      >
+        <Heart className={`w-3.5 h-3.5 ${professor.favorite ? 'fill-current' : ''}`} />
+      </button>
+    </article>
+  );
+}
+
+function GroupedProfessorList({
+  groups,
+  emptyTitle,
+  emptyHint,
+  darkMode,
+  onToggleFavorite,
+  pageSize,
+  letter,
+}: {
+  groups: ProfessorGroup[];
+  emptyTitle: string;
+  emptyHint: string;
+  darkMode: boolean;
+  onToggleFavorite: (professorId: string) => void;
+  pageSize: number;
+  letter: string;
+}) {
+  const [visibleByGroup, setVisibleByGroup] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    setVisibleByGroup({});
+  }, [pageSize, letter, groups.map((g) => g.id).join('|')]);
+
+  if (groups.length === 0) {
+    return (
+      <div className="p-8 text-center">
+        <p className="text-sm font-bold text-slate-500">{emptyTitle}</p>
+        <p className="text-xs text-slate-400 mt-1">{emptyHint}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 space-y-5">
+      {groups.map((group) => {
+        const lettered = letter === 'all'
+          ? group.professors
+          : group.professors.filter((prof) => professorLetter(prof.name) === letter);
+        const shown = visibleByGroup[group.id] ?? pageSize;
+        return (
+          <section key={group.id}>
+            <div className="flex items-end justify-between gap-2 mb-2">
+              <div>
+                <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">{group.title}</h3>
+                {group.subtitle && (
+                  <p className="text-[11px] text-slate-400 font-semibold">{group.subtitle}</p>
+                )}
+              </div>
+              <span className="text-[10px] font-bold text-slate-400">
+                {lettered.length} profe{lettered.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {lettered.length === 0 ? (
+              <div
+                className={`rounded-xl border border-dashed px-4 py-4 text-xs ${
+                  darkMode ? 'border-slate-800 text-slate-500' : 'border-slate-200 text-slate-400'
+                }`}
+              >
+                {group.professors.length === 0
+                  ? 'Aún no hay profes de este curso en el directorio.'
+                  : `No hay profes con la letra ${letter} en este bloque.`}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {lettered.slice(0, shown).map((prof) => (
+                    <ProfessorCard
+                      key={`${group.id}-${prof.id}`}
+                      professor={prof}
+                      darkMode={darkMode}
+                      onToggleFavorite={onToggleFavorite}
+                    />
+                  ))}
+                </div>
+                {lettered.length > shown && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVisibleByGroup((prev) => ({ ...prev, [group.id]: shown + pageSize }))
+                    }
+                    className="mt-2 w-full py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300"
+                  >
+                    Ver {Math.min(pageSize, lettered.length - shown)} más ({shown} de {lettered.length})
+                  </button>
+                )}
+              </>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
 }
 
 export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
   professors,
   courses,
+  profile,
   onToggleFavorite,
-  onAddProfessor,
   darkMode,
 }) => {
   const [search, setSearch] = useState('');
   const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [browseMode, setBrowseMode] = useState<BrowseMode>('all');
   const [moodFilter, setMoodFilter] = useState<FaceRating | 'all'>('all');
   const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'mid' | 'low' | 'none'>('all');
-  const [newName, setNewName] = useState('');
-  const [newCourse, setNewCourse] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
+  const [letterFilter, setLetterFilter] = useState<string>('all');
+  const [pageSize, setPageSize] = useState<10 | 20 | 50>(20);
+  const [visibleCount, setVisibleCount] = useState(20);
   const dataDates = formatDataDates();
-
-  const courseNames = useMemo(
-    () => Array.from(new Set(courses.map((c) => c.name))).sort((a, b) => a.localeCompare(b, 'es')),
-    [courses]
-  );
 
   const filtered = useMemo(() => {
     return professors
@@ -83,21 +227,53 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
       });
   }, [professors, onlyFavorites, search, moodFilter, scoreFilter]);
 
-  const handleAddProfessor = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newName.trim().length < 4) {
-      setFormError('Escribe el nombre completo del profesor.');
-      return;
-    }
-    if (hasBannedLanguage(`${newName} ${newCourse}`)) {
-      setFormError('Ese nombre o curso no se puede guardar. Evita insultos o lenguaje ofensivo.');
-      return;
-    }
-    onAddProfessor(newName.trim(), newCourse.trim());
-    setNewName('');
-    setNewCourse('');
-    setFormError(null);
-  };
+  const myCourseGroups = useMemo(
+    () => groupProfessorsByUserCourses(filtered, courses),
+    [filtered, courses]
+  );
+
+  const careerGroups = useMemo(
+    () => groupProfessorsByCareer(filtered, profile.career),
+    [filtered, profile.career]
+  );
+
+  const letterSource = useMemo(() => {
+    if (browseMode === 'my-courses') return myCourseGroups.flatMap((g) => g.professors);
+    if (browseMode === 'career') return careerGroups.flatMap((g) => g.professors);
+    return filtered;
+  }, [browseMode, myCourseGroups, careerGroups, filtered]);
+
+  const availableLetters = useMemo(() => {
+    const set = new Set(letterSource.map((prof) => professorLetter(prof.name)));
+    return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').filter((letter) => set.has(letter));
+  }, [letterSource]);
+
+  const letteredProfessors = useMemo(
+    () =>
+      letterFilter === 'all'
+        ? filtered
+        : filtered.filter((prof) => professorLetter(prof.name) === letterFilter),
+    [filtered, letterFilter]
+  );
+
+  useEffect(() => {
+    setVisibleCount(pageSize);
+  }, [pageSize, letterFilter, browseMode, search, moodFilter, scoreFilter, onlyFavorites]);
+
+  const modeButton = (id: BrowseMode, label: string, icon: React.ReactNode) => (
+    <button
+      type="button"
+      onClick={() => setBrowseMode(id)}
+      className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 whitespace-nowrap ${
+        browseMode === id
+          ? 'bg-[#e31e24] text-white border-[#e31e24]'
+          : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
 
   return (
     <div
@@ -117,7 +293,7 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-              Promedios de MisProfesores (feliz / regular / triste). Marca un corazón para favoritos: el catálogo y Auto ⚡ los priorizan si dictan ese curso. Para escribir reseñas nuevas, usa el enlace de MisProfesores.
+              Filtra por tus cursos o por tu carrera. Marca un corazón para favoritos: el catálogo y Auto ⚡ los priorizan si dictan ese curso.
             </p>
           </div>
           <a
@@ -130,6 +306,24 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
             Ver más en MisProfesores
           </a>
         </div>
+
+        <div className="mt-4 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+          {modeButton('all', 'Todos', <LayoutGrid className="w-3.5 h-3.5" />)}
+          {modeButton('my-courses', 'Según mis cursos', <BookOpen className="w-3.5 h-3.5" />)}
+          {modeButton('career', 'Según mi carrera', <Briefcase className="w-3.5 h-3.5" />)}
+        </div>
+        {browseMode === 'career' && (
+          <p className="mt-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+            Mostrando áreas de {profile.career || 'tu carrera'} · ciclo {profile.currentCycle}
+          </p>
+        )}
+        {browseMode === 'my-courses' && (
+          <p className="mt-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+            {courses.length > 0
+              ? `${courses.length} curso${courses.length === 1 ? '' : 's'} en tu catálogo`
+              : 'Aún no tienes cursos. Agrégalos o impórtalos para ver a sus profes.'}
+          </p>
+        )}
 
         <div className="mt-4 flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
@@ -210,125 +404,106 @@ export const ProfessorsView: React.FC<ProfessorsViewProps> = ({
             {filtered.length} profes
           </span>
         </div>
+
+        <div className="mt-3 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+          <span className="text-[11px] font-bold text-slate-400 shrink-0">Letra:</span>
+          <button
+            type="button"
+            onClick={() => setLetterFilter('all')}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold border ${
+              letterFilter === 'all'
+                ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            Todas
+          </button>
+          {availableLetters.map((letter) => (
+            <button
+              key={letter}
+              type="button"
+              onClick={() => setLetterFilter(letter)}
+              className={`w-7 py-1 rounded-lg text-[11px] font-bold border ${
+                letterFilter === letter
+                  ? 'bg-[#e31e24] text-white border-[#e31e24]'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {letter}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="text-[11px] font-bold text-slate-400 shrink-0">Mostrar:</span>
+          {([10, 20, 50] as const).map((size) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => setPageSize(size)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
+                pageSize === size
+                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <form
-        onSubmit={handleAddProfessor}
-        className="p-4 border-b border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2"
-      >
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="Nombre del profesor"
-          className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+      {browseMode === 'my-courses' ? (
+        <GroupedProfessorList
+          groups={myCourseGroups}
+          emptyTitle="No hay cursos en tu catálogo"
+          emptyHint="Agrega o importa cursos y aquí verás a los profes que los dictan, separados por curso."
+          darkMode={darkMode}
+          onToggleFavorite={onToggleFavorite}
+          pageSize={pageSize}
+          letter={letterFilter}
         />
-        <input
-          value={newCourse}
-          onChange={(e) => setNewCourse(e.target.value)}
-          list="professor-course-options"
-          placeholder="Curso que dicta (opcional)"
-          className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+      ) : browseMode === 'career' ? (
+        <GroupedProfessorList
+          groups={careerGroups}
+          emptyTitle="No hay profes para esta carrera"
+          emptyHint="Revisa tu perfil o cambia de carrera. También puedes buscar en Todos."
+          darkMode={darkMode}
+          onToggleFavorite={onToggleFavorite}
+          pageSize={pageSize}
+          letter={letterFilter}
         />
-        <datalist id="professor-course-options">
-          {courseNames.map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-        <button
-          type="submit"
-          className="px-3 py-2 rounded-xl bg-[#e31e24] text-white text-xs font-extrabold flex items-center justify-center gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Agregar profe
-        </button>
-      </form>
-
-      {formError && (
-        <div className="mx-4 mt-3 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-semibold">
-          {formError}
+      ) : (
+        <div className="p-4">
+          {letteredProfessors.length === 0 ? (
+            <div className="py-12 text-center text-sm text-slate-400">
+              No hay profesores con ese filtro. Prueba otra búsqueda o espera la próxima actualización.
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                {letteredProfessors.slice(0, visibleCount).map((prof) => (
+                  <ProfessorCard
+                    key={prof.id}
+                    professor={prof}
+                    darkMode={darkMode}
+                    onToggleFavorite={onToggleFavorite}
+                  />
+                ))}
+              </div>
+              {letteredProfessors.length > visibleCount && (
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((n) => n + pageSize)}
+                  className="mt-3 w-full py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300"
+                >
+                  Ver {Math.min(pageSize, letteredProfessors.length - visibleCount)} más ({visibleCount} de {letteredProfessors.length})
+                </button>
+              )}
+            </>
+          )}
         </div>
       )}
-
-      <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {filtered.length === 0 ? (
-          <div className="col-span-full py-12 text-center text-sm text-slate-400">
-            No hay profesores con ese filtro. Agrégalos o importa un horario para detectarlos.
-          </div>
-        ) : (
-          filtered.map((prof) => {
-            const mood = professorMood(prof);
-            return (
-              <article
-                key={prof.id}
-                className={`rounded-2xl border p-3.5 flex flex-col gap-2.5 ${
-                  prof.favorite
-                    ? 'border-rose-300 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/20'
-                    : darkMode
-                      ? 'border-slate-800 bg-slate-800/40'
-                      : 'border-slate-200 bg-slate-50/70'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="font-extrabold text-sm text-slate-900 dark:text-white leading-snug">
-                      {prof.name}
-                    </h3>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {prof.courses.length > 0 ? prof.courses.slice(0, 3).join(' · ') : 'Sin curso asociado'}
-                      {prof.courses.length > 3 ? ` +${prof.courses.length - 3}` : ''}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onToggleFavorite(prof.id)}
-                    className={`p-1.5 rounded-lg ${
-                      prof.favorite ? 'text-rose-500' : 'text-slate-400 hover:text-rose-500'
-                    }`}
-                    title={prof.favorite ? 'Quitar de favoritos' : 'Marcar favorito'}
-                  >
-                    <Heart className={`w-4 h-4 ${prof.favorite ? 'fill-current' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs flex-wrap">
-                  <span className="text-lg leading-none">{mood ? faceEmoji(mood) : '😶'}</span>
-                  <span className="font-bold text-slate-700 dark:text-slate-200">
-                    {mood ? faceLabel(mood) : 'Sin reseñas'}
-                  </span>
-                  {!!prof.sourceCount && !!prof.sourceAverage && (
-                    <span className="text-slate-500 dark:text-slate-400">
-                      · {prof.sourceAverage}/10 · {prof.sourceCount} calif. comunidad
-                    </span>
-                  )}
-                  {prof.reviews.length > 0 && (
-                    <span className="text-slate-400">· {prof.reviews.length} aquí</span>
-                  )}
-                </div>
-
-                <div className="space-y-1.5 max-h-36 overflow-y-auto custom-scrollbar">
-                  {prof.reviews.slice(0, 4).map((review) => (
-                    <div
-                      key={review.id}
-                      className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2.5 py-2"
-                    >
-                      <div className="flex items-center justify-between gap-2 text-[10px] font-bold">
-                        <span>
-                          {faceEmoji(review.rating)} {faceLabel(review.rating)} · {review.courseName}
-                        </span>
-                        <span className="text-slate-400 font-medium">{review.author}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-1 leading-snug">
-                        {review.comment}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-              </article>
-            );
-          })
-        )}
-      </div>
     </div>
   );
 };

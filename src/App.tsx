@@ -19,7 +19,7 @@ import { ExportModal } from './components/ExportModal';
 import { ProfileModal } from './components/ProfileModal';
 import { ProfessorsView } from './components/ProfessorsView';
 import { LimaDistrict, detectInterCampusConflicts } from './utils/distance';
-import { favoriteTeacherNames, mergeProfessorLists, mergeProfessorsFromCourses, normalizePersonName } from './utils/professors';
+import { favoriteTeacherNames, mergeProfessorLists, mergeProfessorsFromCourses } from './utils/professors';
 import { UPC_PROFESSORS_SEED } from './data/upcProfessors';
 import { decodePlanHash } from './utils/export';
 import {
@@ -409,29 +409,6 @@ export default function App() {
     );
   };
 
-  const handleAddProfessor = (name: string, courseName: string) => {
-    setProfessors((prev) => {
-      const key = normalizePersonName(name);
-      if (prev.some((prof) => normalizePersonName(prof.name) === key)) {
-        return prev.map((prof) =>
-          normalizePersonName(prof.name) === key && courseName && !prof.courses.includes(courseName)
-            ? { ...prof, courses: [...prof.courses, courseName] }
-            : prof
-        );
-      }
-      return [
-        ...prev,
-        {
-          id: `prof-${key.replace(/\s+/g, '-')}-${Date.now()}`,
-          name,
-          courses: courseName ? [courseName] : [],
-          favorite: false,
-          reviews: [],
-        },
-      ];
-    });
-  };
-
   const handleApplyCombination = (comb: ScheduleCombination) => {
     setSelectedSections(comb.selectedSections);
     setActiveView('grid');
@@ -615,8 +592,8 @@ export default function App() {
           <ProfessorsView
             professors={professors}
             courses={courses}
+            profile={profile}
             onToggleFavorite={handleToggleFavoriteProfessor}
-            onAddProfessor={handleAddProfessor}
             darkMode={darkMode}
           />
         )}

@@ -26,6 +26,7 @@ import {
   MapPin,
   Navigation,
   Heart,
+  Hash,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -50,6 +51,12 @@ const ALL_GENERATOR_CAMPUSES: UPCCampus[] = [
 
 const ALL_GENERATOR_MODALITIES = ['Presencial', 'Semipresencial', 'Online'] as const;
 type GeneratorModality = (typeof ALL_GENERATOR_MODALITIES)[number];
+
+function findSectionByNrc(course: Course, nrc: string) {
+  const wanted = nrc.trim();
+  if (!wanted) return undefined;
+  return course.sections.find((section) => section.id.trim().toLowerCase() === wanted.toLowerCase());
+}
 
 interface AutoGeneratorModalProps {
   isOpen: boolean;
@@ -97,6 +104,7 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
   const [filterOnlyVacancies, setFilterOnlyVacancies] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
   const [courseModalities, setCourseModalities] = useState<Record<string, GeneratorModality[]>>({});
+  const [lockedNrcs, setLockedNrcs] = useState<Record<string, string>>({});
   const [filterPreferFavorites, setFilterPreferFavorites] = useState(true);
 
   const closestCampuses = useMemo(
@@ -117,6 +125,13 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
 
   const coursesForGenerator = useMemo(() => {
     return courses.map((course) => {
+      const lockedSection = findSectionByNrc(course, lockedNrcs[course.id] || '');
+      if ((lockedNrcs[course.id] || '').trim()) {
+        return {
+          ...course,
+          sections: lockedSection ? [lockedSection] : [],
+        };
+      }
       const preferred = courseModalities[course.id];
       const modsToUse =
         preferred && preferred.length > 0 ? preferred : effectiveModalities;
@@ -148,49 +163,81 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
     effectiveModalities,
     filterOnlyVacancies,
     courseModalities,
+    lockedNrcs,
     filterPreferFavorites,
     favoriteTeacherNames,
   ]);
 
-  // Generate combinations
-  const allCombinations = useMemo(() => {
-    if (targetCourseIds.length === 0) return [];
-    return generateAllCombinations(coursesForGenerator, targetCourseIds);
-  }, [coursesForGenerator, targetCourseIds]);
-
-  // Apply UI Filters
   const filteredCombinations = useMemo(() => {
-    return allCombinations.filter((comb) => {
-      if (filterNoConflicts && comb.stats.conflictsCount > 0) return false;
+    if (targetCourseIds.length === 0) return [];
 
-      // Inter-campus commute check
+    const courseNameById = (id: string) => courses.find((course) => course.id === id)?.name || id;
+    const passesUiFilters = (comb: ScheduleCombination) => {
+      if (filterNoConflicts && comb.stats.conflictsCount > 0) return false;
       if (filterNoInterCampusConflicts) {
         const combSessions = getActiveSessions(coursesForGenerator, comb.selectedSections);
-        const interConflicts = detectInterCampusConflicts(combSessions);
-        if (interConflicts.length > 0) return false;
+        if (detectInterCampusConflicts(combSessions).length > 0) return false;
       }
-
       if (filterFreeFriday && !comb.tags.includes('Viernes libre')) return false;
       if (filterFreeSaturday && !comb.tags.includes('Sábado libre')) return false;
       if (filterMaxEmptyHours !== null && comb.stats.emptyHours > filterMaxEmptyHours) return false;
       return true;
-    }).sort((a, b) => {
-      const countFav = (comb: ScheduleCombination) =>
-        Object.entries(comb.selectedSections).reduce((sum, [courseId, sectionId]) => {
-          const course = coursesForGenerator.find((c) => c.id === courseId);
-          const section = course?.sections.find((s) => s.id === sectionId);
-          return section && sectionHasFavoriteTeacher(section, favoriteTeacherNames) ? sum + 1 : sum;
-        }, 0);
-      return countFav(b) - countFav(a);
+    };
+    const markPartial = (combs: ScheduleCombination[], droppedIds: string[], prefix: string) => {
+      if (droppedIds.length === 0) return combs;
+      const names = droppedIds.map(courseNameById);
+      return combs.map((comb, index) => ({
+        ...comb,
+        id: `${prefix}-${comb.id}-${index}`,
+        isPartial: true,
+        droppedCourseNames: names,
+        tags: comb.tags.includes('No caben todos') ? comb.tags : [...comb.tags, 'No caben todos'],
+      }));
+    };
+    const countFavorites = (comb: ScheduleCombination) =>
+      Object.entries(comb.selectedSections).reduce((sum, [courseId, sectionId]) => {
+        const course = coursesForGenerator.find((c) => c.id === courseId);
+        const section = course?.sections.find((s) => s.id === sectionId);
+        return section && sectionHasFavoriteTeacher(section, favoriteTeacherNames) ? sum + 1 : sum;
+      }, 0);
+
+    const withSections = targetCourseIds.filter((id) => {
+      const course = coursesForGenerator.find((c) => c.id === id);
+      return !!course && course.sections.length > 0;
+    });
+    const droppedByFilters = targetCourseIds.filter((id) => !withSections.includes(id));
+
+    const full = generateAllCombinations(coursesForGenerator, withSections).filter(passesUiFilters);
+    let results =
+      droppedByFilters.length > 0 ? markPartial(full, droppedByFilters, 'missing-filter') : full;
+
+    if (results.length === 0 && withSections.length > 1) {
+      const fallbacks: ScheduleCombination[] = [];
+      for (const dropId of withSections) {
+        const subset = withSections.filter((id) => id !== dropId);
+        const extra = generateAllCombinations(coursesForGenerator, subset).filter(passesUiFilters);
+        fallbacks.push(...markPartial(extra, [...droppedByFilters, dropId], `drop-${dropId}`));
+        if (fallbacks.length >= 40) break;
+      }
+      results = fallbacks;
+    }
+
+    return results.sort((a, b) => {
+      if (!!a.isPartial !== !!b.isPartial) return a.isPartial ? 1 : -1;
+      const coursesA = Object.keys(a.selectedSections).length;
+      const coursesB = Object.keys(b.selectedSections).length;
+      if (coursesA !== coursesB) return coursesB - coursesA;
+      return countFavorites(b) - countFavorites(a);
     });
   }, [
-    allCombinations,
+    courses,
+    coursesForGenerator,
+    targetCourseIds,
     filterNoConflicts,
     filterNoInterCampusConflicts,
     filterFreeFriday,
     filterFreeSaturday,
     filterMaxEmptyHours,
-    coursesForGenerator,
     favoriteTeacherNames,
   ]);
 
@@ -307,7 +354,7 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
             </span>
             {coursesForGenerator.some((c) => targetCourseIds.includes(c.id) && c.sections.length === 0) && (
               <p className="mb-2 text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg px-2.5 py-1.5">
-                Alguno de los cursos no tiene secciones con las sedes o modalidades marcadas. Amplía esos filtros o quita ese curso.
+                Alguno de los cursos no tiene secciones con las sedes, modalidades o NRC marcados. Revisa el NRC, amplía esos filtros o quita ese curso.
               </p>
             )}
             <div className="flex items-center gap-2 flex-wrap">
@@ -341,13 +388,15 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                   Modalidad que quieres para cada curso:
                 </span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Elige si ese curso debe ser presencial, semipresencial o virtual. Puedes marcar varias. “Cualquiera” usa todas.
+                  Elige modalidad o escribe un NRC para fijar esa sección sí o sí en todas las combinaciones.
                 </p>
-                {coursesForGenerator
+                {courses
                   .filter((c) => targetCourseIds.includes(c.id))
                   .map((c) => {
                     const selectedMods = courseModalities[c.id] || [];
                     const isAny = selectedMods.length === 0;
+                    const lockedValue = lockedNrcs[c.id] || '';
+                    const lockedSection = findSectionByNrc(c, lockedValue);
                     return (
                       <div
                         key={`mod-${c.id}`}
@@ -360,6 +409,29 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                         <span className="text-xs font-bold text-slate-800 dark:text-slate-100 min-w-[140px] flex-1">
                           {c.name}
                         </span>
+                        <label className="flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1">
+                          <Hash className="w-3 h-3 text-slate-400" />
+                          <input
+                            value={lockedValue}
+                            onChange={(e) =>
+                              setLockedNrcs((prev) => ({ ...prev, [c.id]: e.target.value.replace(/\D/g, '') }))
+                            }
+                            placeholder="NRC"
+                            inputMode="numeric"
+                            className="w-[72px] bg-transparent text-[11px] font-mono font-bold outline-none text-slate-800 dark:text-slate-100 placeholder:text-slate-400"
+                            title="Si pones un NRC, Auto ⚡ usará esa sección en todas las combinaciones"
+                          />
+                        </label>
+                        {lockedValue && lockedSection && (
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                            Sí o sí · {lockedSection.sectionName}
+                          </span>
+                        )}
+                        {lockedValue && !lockedSection && (
+                          <span className="text-[10px] font-bold text-red-500">
+                            NRC no está en este curso
+                          </span>
+                        )}
                         <div className="flex items-center gap-1 flex-wrap">
                           <button
                             type="button"
@@ -602,11 +674,21 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
             <div className="flex items-center justify-between mb-3">
               <span className="font-extrabold text-sm tracking-tight">
                 {filteredCombinations.length} Combinaciones Encontradas
+                {targetCourseIds.length > 0 && (
+                  <span className="ml-2 font-semibold text-slate-500 dark:text-slate-400">
+                    · {Math.max(...filteredCombinations.map((c) => Object.keys(c.selectedSections).length), 0)} de {targetCourseIds.length} cursos
+                  </span>
+                )}
               </span>
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                Ordenadas por eficiencia y menos huecos
+                Primero las que incluyen todos tus cursos
               </span>
             </div>
+            {filteredCombinations.some((comb) => comb.isPartial) && (
+              <p className="mb-3 text-[11px] text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-xl px-3 py-2">
+                Se muestran también combinaciones incompletas porque los filtros, el NRC o los cruces no permiten llevar todos los cursos seleccionados.
+              </p>
+            )}
 
             {filteredCombinations.length === 0 ? (
               <div className="py-12 text-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
@@ -654,6 +736,9 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                                 <Heart className="w-3 h-3 fill-current" /> {favoriteCount} favorito{favoriteCount === 1 ? '' : 's'}
                               </span>
                             )}
+                            <span className="text-[10px] font-bold text-slate-500">
+                              {Object.keys(comb.selectedSections).length}/{targetCourseIds.length} cursos
+                            </span>
                           </div>
 
                           <div className="flex items-center gap-1 flex-wrap">
@@ -698,6 +783,12 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                           </div>
                         </div>
 
+                        {comb.isPartial && comb.droppedCourseNames && comb.droppedCourseNames.length > 0 && (
+                          <p className="mt-3 text-[11px] leading-snug text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg px-2.5 py-2">
+                            Se agregó esta opción porque la combinación seleccionada limita llevar todos los cursos. Faltan: {comb.droppedCourseNames.join(', ')}.
+                          </p>
+                        )}
+
                         {/* Selected Sections in this combination */}
                         <div className="mt-3 space-y-1 text-xs">
                           {Object.entries(comb.selectedSections).map(([cId, secId]) => {
@@ -714,11 +805,24 @@ export const AutoGeneratorModal: React.FC<AutoGeneratorModalProps> = ({
                                   {course.name}
                                 </span>
                                 <span className="font-mono text-[10px] font-bold text-red-600 dark:text-red-400 shrink-0 bg-red-50 dark:bg-red-950/40 px-1.5 py-0.5 rounded border border-red-200/60 dark:border-red-900/50">
-                                  {sec.sectionName}
+                                  {sec.sectionName} · {sec.id}
                                 </span>
                               </div>
                             );
                           })}
+                          {comb.droppedCourseNames?.map((name) => (
+                            <div
+                              key={`dropped-${name}`}
+                              className="flex items-center justify-between gap-2 text-[11px] py-1 border-b border-dashed border-amber-200 dark:border-amber-900/60"
+                            >
+                              <span className="font-semibold text-amber-800 dark:text-amber-200 flex-1 leading-snug break-words">
+                                {name}
+                              </span>
+                              <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                                No cabe
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       </div>
 
